@@ -401,42 +401,35 @@ def distanza_km(lat1, lon1, lat2, lon2):
 
 
 def mn_login(email, password):
-    """Ritorna (token, errore). Account: my.meteonetwork.it"""
+    """Ritorna (token, errore). Una sola chiamata: il login ha limite stretto (429)."""
     if not email or not password:
         return None, "Inserisci email e password di myMeteoNetwork."
-    url = "https://api.meteonetwork.it/v3/login"
-    headers = {"User-Agent": "PorciniPredictor/1.0 (uso personale)"}
-    tentativi = [
-        {"data": {"email": email, "password": password}},
-        {"params": {"email": email, "password": password}},
-        {"json": {"email": email, "password": password}},
-    ]
-    ultimo = "nessuna risposta"
-    for kwargs in tentativi:
-        try:
-            r = requests.post(url, timeout=20, headers=headers, **kwargs)
-        except Exception as e:
-            ultimo = str(e)
-            continue
-        ultimo = f"HTTP {r.status_code}: {r.text[:280]}"
-        if r.status_code != 200:
-            continue
-        try:
-            js = r.json()
-        except Exception:
-            continue
-        if not isinstance(js, dict):
-            continue
-        data = js.get("data") if isinstance(js.get("data"), dict) else {}
-        token = js.get("access_token") or js.get("token") or data.get("token") or data.get("access_token")
-        if token:
-            return str(token), None
-    if "401" in ultimo or "403" in ultimo:
-        return None, (
-            "Credenziali rifiutate. Serve l'account di my.meteonetwork.it. "
-            "Puoi generare un token nuovo solo ogni ora."
+    try:
+        r = requests.post(
+            "https://api.meteonetwork.it/v3/login",
+            data={"email": email, "password": password},
+            headers={"User-Agent": "PorciniPredictor/1.0 (uso personale)"},
+            timeout=20,
         )
-    return None, f"Login API non riuscito. {ultimo}"
+    except Exception as e:
+        return None, f"Rete: {e}"
+    if r.status_code == 429:
+        return None, (
+            "Troppe richieste a MeteoNetwork (HTTP 429). "
+            "Non riprovare subito: aspetta almeno 30–60 minuti. "
+            "Poi usa il pulsante «Collega MeteoNetwork» una volta sola, oppure incolla un token già salvato."
+        )
+    if r.status_code != 200:
+        return None, f"Login API non riuscito. HTTP {r.status_code}: {r.text[:240]}"
+    try:
+        js = r.json()
+    except Exception:
+        return None, f"Risposta login non valida: {r.text[:200]}"
+    data = js.get("data") if isinstance(js.get("data"), dict) else {}
+    token = js.get("access_token") or js.get("token") or data.get("token") or data.get("access_token")
+    if token:
+        return str(token), None
+    return None, f"Nessun token nella risposta: {r.text[:240]}"
 
 
 @st.cache_data(ttl=21600)
@@ -1139,7 +1132,10 @@ with st.sidebar:
     )
     mn_email = st.text_input("Email myMeteoNetwork", value="")
     mn_pass = st.text_input("Password myMeteoNetwork", type="password", value="")
+    collega_mn = st.button("Collega MeteoNetwork (una volta sola)")
     mn_token_manuale = st.text_input("Oppure incolla il token STANDARD", value="")
+    if st.session_state.get("mn_token"):
+        st.caption("Token già in memoria in questa sessione. Non rilogga da solo.")
 
     st.markdown("---")
     st.header("⚙️ Filtri e regole")
@@ -1180,17 +1176,20 @@ with st.sidebar:
 
 regole = {"pioggia_min": pioggia_min, "pioggia_max": pioggia_max}
 
-mn_token = mn_token_manuale.strip()
-mn_login_err = None
-if not mn_token and mn_email and mn_pass:
-    mn_token, mn_login_err = mn_login(mn_email, mn_pass)
-    if mn_token:
-        st.sidebar.success("MeteoNetwork collegato")
-        st.sidebar.caption("Se il login funziona, copia il token e incollalo sotto così non riloggi ogni volta.")
-        st.sidebar.code(mn_token, language=None)
+mn_token = (mn_token_manuale or "").strip() or st.session_state.get("mn_token") or ""
+if collega_mn:
+    tok, err = mn_login(mn_email, mn_pass)
+    if tok:
+        st.session_state["mn_token"] = tok
+        mn_token = tok
+        st.sidebar.success("MeteoNetwork collegato. Copia il token e salvalo.")
+        st.sidebar.code(tok, language=None)
     else:
-        st.sidebar.error(mn_login_err or "Login MeteoNetwork non riuscito")
-elif not mn_token:
+        st.sidebar.error(err or "Login MeteoNetwork non riuscito")
+elif mn_token:
+    st.session_state["mn_token"] = mn_token
+    st.sidebar.success("MeteoNetwork attivo (token in sessione)")
+else:
     st.sidebar.info("Senza MeteoNetwork uso stazioni ufficiali + modello ICON-2I. L'app funziona lo stesso.")
 
 punti_filtrati = [
@@ -1392,5 +1391,3 @@ st.caption(
     "(pioggia, temperature, previsione 7 giorni, umidità del suolo). "
     "Rispetta i regolamenti regionali su tesserini, quantitativi e specie protette."
 )
-
-            
