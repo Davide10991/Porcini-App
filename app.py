@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
-from math import radians, sin, cos, sqrt, atan2
+from math import radians, sin, cos, sqrt, atan2, exp
 import io
 import gzip
 import json
@@ -726,6 +726,62 @@ def get_stazione_dati(station_id, days=30):
     return out
 
 
+def riepilogo_vento(df, giorni=10):
+    """Vento persistente secca il letto: fattore 1 = ok, verso 0 = nascite azzerate."""
+    vuoto = {
+        "vento_medio_10g": None,
+        "vento_max_10g": None,
+        "giorni_oltre_20": 0,
+        "giorni_oltre_30": 0,
+        "giorni_consecutivi_venti": 0,
+        "fattore_vento": 1.0,
+        "nota_vento": "Vento non disponibile",
+    }
+    if df is None or "vento_max" not in getattr(df, "columns", []):
+        return vuoto
+    coda = df.tail(giorni).copy()
+    v = pd.to_numeric(coda["vento_max"], errors="coerce").fillna(0)
+    if v.isna().all() or float(v.max()) == 0 and float(v.mean()) == 0:
+        # potrebbe essere tutto zero vero, trattiamo comunque
+        pass
+    giorni_20 = int((v >= 20).sum())
+    giorni_30 = int((v >= 30).sum())
+    streak = 0
+    for val in reversed(list(v)):
+        if val >= 20:
+            streak += 1
+        else:
+            break
+    media = float(v.mean())
+    vmax = float(v.max())
+    # stress: persistenza + intensità (esponenziale come richiesto)
+    stress = giorni_20 * 0.12 + giorni_30 * 0.32 + max(0, streak - 1) * 0.22
+    if media >= 28:
+        stress += 0.7
+    elif media >= 22:
+        stress += 0.35
+    fattore = float(max(0.03, min(1.0, exp(-stress))))
+    if giorni_30 >= 4 and streak >= 3:
+        fattore = min(fattore, 0.12)
+    if fattore >= 0.85:
+        nota = "Vento debole, umidità del suolo tenuta"
+    elif fattore >= 0.5:
+        nota = "Vento fresco persistente: il letto si sta asciugando"
+    elif fattore >= 0.2:
+        nota = "Vento forte e ripetuto: nascite fortemente ridotte"
+    else:
+        nota = "Vento persistente >20–30 km/h: umidità quasi azzerata"
+    return {
+        "vento_medio_10g": round(media, 1),
+        "vento_max_10g": round(vmax, 1),
+        "giorni_oltre_20": giorni_20,
+        "giorni_oltre_30": giorni_30,
+        "giorni_consecutivi_venti": streak,
+        "fattore_vento": round(fattore, 3),
+        "nota_vento": nota,
+    }
+
+
 @st.cache_data(ttl=3600)
 def get_openmeteo_bundle(lat, lon, days=30):
     """Storico + previsione + suolo. Pioggia da ICON-2I (2 km) se disponibile."""
@@ -743,7 +799,7 @@ def get_openmeteo_bundle(lat, lon, days=30):
                 "longitude": lon,
                 "start_date": start,
                 "end_date": end,
-                "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+                "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,wind_speed_10m_max",
                 "models": "italia_meteo_arpae_icon_2i",
                 "timezone": "Europe/Rome",
             },
@@ -758,6 +814,7 @@ def get_openmeteo_bundle(lat, lon, days=30):
                     "t_max": data["daily"]["temperature_2m_max"],
                     "t_min": data["daily"]["temperature_2m_min"],
                     "t_mean": data["daily"]["temperature_2m_mean"],
+                    "vento_max": data["daily"].get("wind_speed_10m_max") or 0,
                 }).fillna(0)
     except Exception:
         storico = None
@@ -768,7 +825,7 @@ def get_openmeteo_bundle(lat, lon, days=30):
         "longitude": lon,
         "past_days": min(days, 92),
         "forecast_days": 7,
-        "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean",
+        "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,wind_speed_10m_max",
         "hourly": "soil_moisture_7_to_28cm",
         "timezone": "Europe/Rome",
         "models": "italia_meteo_arpae_icon_2i",
@@ -791,10 +848,15 @@ def get_openmeteo_bundle(lat, lon, days=30):
             "t_max": data["daily"]["temperature_2m_max"],
             "t_min": data["daily"]["temperature_2m_min"],
             "t_mean": data["daily"]["temperature_2m_mean"],
+            "vento_max": data["daily"].get("wind_speed_10m_max") or 0,
         }).fillna(0)
 
     if storico is None and daily is not None:
         storico = daily[daily["date"] <= oggi].tail(days)
+    elif storico is not None and daily is not None and "vento_max" in daily.columns:
+        # allinea il vento del modello anche se la pioggia viene da altrove
+        if "vento_max" not in storico.columns:
+            storico = storico.merge(daily[["date", "vento_max"]], on="date", how="left")
     forecast = daily[daily["date"] > oggi].head(7) if daily is not None else None
 
     soil = None
@@ -802,11 +864,12 @@ def get_openmeteo_bundle(lat, lon, days=30):
         soil_vals = [v for v in data["hourly"]["soil_moisture_7_to_28cm"] if v is not None]
         if soil_vals:
             soil = round(sum(soil_vals[-72:]) / max(1, len(soil_vals[-72:])), 3)
-    return storico, forecast, soil
+    vento = riepilogo_vento(storico if storico is not None else daily)
+    return storico, forecast, soil, vento
 
 
 def get_openmeteo_data(lat, lon, days=30):
-    storico, _, _ = get_openmeteo_bundle(lat, lon, days)
+    storico, *_ = get_openmeteo_bundle(lat, lon, days)
     return storico
 
 
@@ -825,11 +888,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     info = {"fonte": "ICON-2I 2km (modello)", "stazione": "n/d", "distanza_km": None, "quota_stazione": None}
     forecast = None
     soil = None
+    vento = riepilogo_vento(None)
 
     try:
-        storico_om, forecast, soil = get_openmeteo_bundle(lat, lon, days)
+        storico_om, forecast, soil, vento = get_openmeteo_bundle(lat, lon, days)
     except Exception:
-        storico_om, forecast, soil = None, None, None
+        storico_om, forecast, soil, vento = None, None, None, riepilogo_vento(None)
 
     # 1) rete densa MeteoNetwork: prova le 3 stazioni più adatte (distanza + quota)
     if mn_token:
@@ -838,20 +902,20 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             df_mn = mn_dati_stazione(mn_token, s["code"], days)
             if df_mn is not None and len(df_mn) >= 5 and float(df_mn["precip"].sum()) >= 0:
                 info = _info_stazione(s, "MeteoNetwork (pluviometro reale)")
-                return df_mn, info, forecast, soil
+                return df_mn, info, forecast, soil, vento
 
     # 2) stazioni ufficiali Meteostat vicine (non più solo l'aeroporto più vicino)
     for s in stazioni_ufficiali_vicine(lat, lon, quota=quota, n=4, max_km=max_km_stazione):
         df_st = get_stazione_dati(s["id"], days)
         if df_st is not None and len(df_st) >= 8:
             info = _info_stazione(s, "Stazione ufficiale (Meteostat)")
-            return df_st, info, forecast, soil
+            return df_st, info, forecast, soil, vento
 
     # 3) modello italiano 2 km sul punto del bosco
     if storico_om is not None:
         info["fonte"] = "ICON-2I 2km sul punto (nessuna stazione utile vicina)"
-        return storico_om, info, forecast, soil
-    return None, info, forecast, soil
+        return storico_om, info, forecast, soil, vento
+    return None, info, forecast, soil, vento
 
 
 def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
@@ -879,7 +943,7 @@ def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
     return stato
 
 
-def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None):
+def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None):
     if df is None or len(df) < 8:
         return 0, "Dati insufficienti", {}
 
@@ -969,8 +1033,15 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         elif 0.18 <= soil <= 0.42:
             score_suolo = 5
 
-    punteggio_totale = min(100, score_pioggia + score_temp + score_tempo + score_suolo)
+    vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
+    fattore_v = float(vento.get("fattore_vento") or 1.0)
+
+    # il vento persistente brucia l'effetto della pioggia e del suolo (decadimento esponenziale)
+    umido = (score_pioggia + score_tempo + score_suolo) * fattore_v
+    punteggio_totale = min(100, umido + score_temp * (0.45 + 0.55 * fattore_v))
     consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
+    if fattore_v < 0.5:
+        consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
 
     dettaglio = {
         "precip_totale_30g": round(precip_totale, 1),
@@ -982,6 +1053,13 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "giorni_attesa_consigliati": giorni_attesa,
         "umidita_suolo": soil if soil is not None else "n/d",
         "consiglio": consiglio,
+        "vento_medio_10g": vento.get("vento_medio_10g"),
+        "vento_max_10g": vento.get("vento_max_10g"),
+        "giorni_vento_20": vento.get("giorni_oltre_20"),
+        "giorni_vento_30": vento.get("giorni_oltre_30"),
+        "giorni_vento_consecutivi": vento.get("giorni_consecutivi_venti"),
+        "fattore_vento": vento.get("fattore_vento"),
+        "nota_vento": vento.get("nota_vento"),
     }
 
     if punteggio_totale >= 70:
@@ -1014,12 +1092,13 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
 
 
 def analizza_punto(p, regole, mn_token, max_km_stazione=35):
-    df, info_meteo, forecast, soil = get_weather_data(
+    df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
     )
     score, livello, det = calcola_punteggio(
-        df, p["tipo"], regole, quota=p.get("quota", 1000), soil=soil, forecast=forecast
+        df, p["tipo"], regole, quota=p.get("quota", 1000),
+        soil=soil, forecast=forecast, vento=vento,
     )
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
@@ -1221,6 +1300,13 @@ with col2:
             st.write(f"• Temperatura min media: **{d.get('t_min_media')} °C**")
             st.write(f"• Giorni dalla buona pioggia: **{d.get('giorni_dalla_buona_pioggia')}** (attesa: {d.get('giorni_attesa_consigliati')} gg)")
             st.write(f"• Umidità suolo (7–28 cm): **{d.get('umidita_suolo')}**")
+            st.write(
+                f"• Vento 10 gg: media **{d.get('vento_medio_10g')} km/h**, "
+                f"max **{d.get('vento_max_10g')} km/h** "
+                f"({d.get('giorni_vento_20')} gg ≥20, {d.get('giorni_vento_30')} gg ≥30, "
+                f"streak {d.get('giorni_vento_consecutivi')})"
+            )
+            st.write(f"• Fattore vento (1=ok, ~0=letto secco): **{d.get('fattore_vento')}** — {d.get('nota_vento')}")
             meteo = r.get("meteo", {})
             dist = meteo.get("distanza_km")
             dist_txt = f" ({dist} km)" if dist is not None else ""
@@ -1247,6 +1333,11 @@ if risultati_view:
         "t_min": r["dettaglio"].get("t_min_media"),
         "giorni_da_pioggia": r["dettaglio"].get("giorni_dalla_buona_pioggia"),
         "suolo": r["dettaglio"].get("umidita_suolo"),
+        "vento_medio_kmh": r["dettaglio"].get("vento_medio_10g"),
+        "gg_vento_20": r["dettaglio"].get("giorni_vento_20"),
+        "gg_vento_30": r["dettaglio"].get("giorni_vento_30"),
+        "fattore_vento": r["dettaglio"].get("fattore_vento"),
+        "nota_vento": r["dettaglio"].get("nota_vento"),
         "fonte": r.get("meteo", {}).get("fonte"),
         "stazione": r.get("meteo", {}).get("stazione"),
     } for r in risultati_view])
@@ -1301,3 +1392,5 @@ st.caption(
     "(pioggia, temperature, previsione 7 giorni, umidità del suolo). "
     "Rispetta i regolamenti regionali su tesserini, quantitativi e specie protette."
 )
+
+            
