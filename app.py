@@ -705,17 +705,18 @@ def get_stazione_dati(station_id, days=30):
     df = df[(df["date"] >= inizio) & (df["date"] <= fine)].copy()
     if len(df) < 8:
         return None
-    prcp = pd.to_numeric(df.get("prcp", 0), errors="coerce")
+    prcp = pd.to_numeric(df.get("prcp"), errors="coerce")
     # se la colonna pioggia è quasi tutta vuota la stazione non è utile per i porcini
-    if prcp.notna().sum() < 5:
+    if prcp.notna().sum() < 8:
         return None
+    # NON mettere 0 sui buchi: uno 0 finto abbassa i mm rispetto alla stazione vera
     out = pd.DataFrame({
         "date": df["date"],
-        "precip": prcp.fillna(0),
-        "t_max": pd.to_numeric(df.get("tmax", 0), errors="coerce"),
-        "t_min": pd.to_numeric(df.get("tmin", 0), errors="coerce"),
-        "t_mean": pd.to_numeric(df.get("tavg", 0), errors="coerce"),
-    }).fillna(0)
+        "precip": prcp,
+        "t_max": pd.to_numeric(df.get("tmax"), errors="coerce"),
+        "t_min": pd.to_numeric(df.get("tmin"), errors="coerce"),
+        "t_mean": pd.to_numeric(df.get("tavg"), errors="coerce"),
+    })
     return out
 
 
@@ -873,12 +874,21 @@ def _info_stazione(s, fonte):
         "distanza_km": s.get("distanza_km"),
         "quota_stazione": s.get("quota"),
         "codice": s.get("code") or s.get("id"),
+        "pioggia_modello_30g": None,
+        "pioggia_stazione_30g": None,
     }
 
 
 @st.cache_data(ttl=3600)
 def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35):
-    info = {"fonte": "ICON-2I 2km (modello)", "stazione": "n/d", "distanza_km": None, "quota_stazione": None}
+    info = {
+        "fonte": "ICON-2I 2km (modello sul bosco)",
+        "stazione": "n/d",
+        "distanza_km": None,
+        "quota_stazione": None,
+        "pioggia_modello_30g": None,
+        "pioggia_stazione_30g": None,
+    }
     forecast = None
     soil = None
     vento = riepilogo_vento(None)
@@ -888,25 +898,55 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     except Exception:
         storico_om, forecast, soil, vento = None, None, None, riepilogo_vento(None)
 
-    # 1) rete densa MeteoNetwork: prova le 3 stazioni più adatte (distanza + quota)
+    if storico_om is not None and "precip" in storico_om.columns:
+        info["pioggia_modello_30g"] = round(float(storico_om["precip"].sum(skipna=True)), 1)
+
+    def _mm(df):
+        if df is None or "precip" not in df.columns:
+            return None
+        return round(float(df["precip"].sum(skipna=True)), 1)
+
+    # 1) MeteoNetwork solo se davvero vicina
     if mn_token:
         stazioni = mn_elenco_stazioni(mn_token)
-        for s in mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione):
+        for s in mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=min(max_km_stazione, 25)):
             df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            if df_mn is not None and len(df_mn) >= 5 and float(df_mn["precip"].sum()) >= 0:
+            if df_mn is not None and df_mn["precip"].notna().sum() >= 5:
                 info = _info_stazione(s, "MeteoNetwork (pluviometro reale)")
+                info["pioggia_modello_30g"] = info.get("pioggia_modello_30g") or (
+                    round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
+                )
+                info["pioggia_stazione_30g"] = _mm(df_mn)
                 return df_mn, info, forecast, soil, vento
 
-    # 2) stazioni ufficiali Meteostat vicine (non più solo l'aeroporto più vicino)
-    for s in stazioni_ufficiali_vicine(lat, lon, quota=quota, n=4, max_km=max_km_stazione):
+    # 2) ufficiale SOLO se è vicina al bosco (altrimenti i mm non c'entrano)
+    limite_ufficiale = min(18, max_km_stazione)
+    for s in stazioni_ufficiali_vicine(lat, lon, quota=quota, n=4, max_km=limite_ufficiale):
+        dq = None
+        if quota is not None and s.get("quota") is not None:
+            dq = abs(quota - s["quota"])
+        if dq is not None and dq > 400:
+            continue
         df_st = get_stazione_dati(s["id"], days)
-        if df_st is not None and len(df_st) >= 8:
-            info = _info_stazione(s, "Stazione ufficiale (Meteostat)")
+        if df_st is not None and df_st["precip"].notna().sum() >= 8:
+            info = _info_stazione(s, "Stazione ufficiale vicina")
+            info["pioggia_modello_30g"] = (
+                round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
+            )
+            info["pioggia_stazione_30g"] = _mm(df_st)
             return df_st, info, forecast, soil, vento
 
-    # 3) modello italiano 2 km sul punto del bosco
+    # 3) default: pioggia del MODELLO sul punto del bosco (non un aeroporto a 40 km)
     if storico_om is not None:
-        info["fonte"] = "ICON-2I 2km sul punto (nessuna stazione utile vicina)"
+        vicine = stazioni_ufficiali_vicine(lat, lon, quota=quota, n=1, max_km=80)
+        if vicine:
+            s = vicine[0]
+            df_st = get_stazione_dati(s["id"], days)
+            info["stazione"] = f"{s['nome']} (solo confronto, {s['distanza_km']} km)"
+            info["distanza_km"] = s["distanza_km"]
+            info["quota_stazione"] = s.get("quota")
+            info["pioggia_stazione_30g"] = _mm(df_st)
+        info["fonte"] = "ICON-2I 2 km sul bosco (stazione ufficiale troppo lontana per i mm)"
         return storico_om, info, forecast, soil, vento
     return None, info, forecast, soil, vento
 
@@ -1006,7 +1046,10 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     giorni_dalla_pioggia = 99
     cum = 0
     for i in range(len(df) - 1, -1, -1):
-        cum += float(df.iloc[i]["precip"])
+        val = df.iloc[i]["precip"]
+        if pd.isna(val):
+            continue
+        cum += float(val)
         if cum >= 30:
             giorni_dalla_pioggia = len(df) - 1 - i
             break
@@ -1309,7 +1352,12 @@ with col2:
             meteo = r.get("meteo", {})
             dist = meteo.get("distanza_km")
             dist_txt = f" ({dist} km)" if dist is not None else ""
-            st.write(f"• Fonte pioggia: **{meteo.get('fonte', 'n/d')}**")
+            st.write(f"• Fonte usata per il punteggio: **{meteo.get('fonte', 'n/d')}**")
+            if meteo.get("pioggia_modello_30g") is not None or meteo.get("pioggia_stazione_30g") is not None:
+                st.write(
+                    f"• Confronto 30 gg — modello sul bosco: **{meteo.get('pioggia_modello_30g')} mm** · "
+                    f"stazione più vicina: **{meteo.get('pioggia_stazione_30g')} mm**"
+                )
             qst = meteo.get("quota_stazione")
             qst_txt = f", quota stazione {int(qst)} m" if qst not in (None, "") else ""
             st.write(f"• Stazione: **{meteo.get('stazione', 'n/d')}**{dist_txt}{qst_txt}")
