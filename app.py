@@ -437,50 +437,122 @@ def mn_login(email, password):
     return None, f"Nessun token nella risposta: {r.text[:240]}"
 
 
-@st.cache_data(ttl=21600)
-def mn_elenco_stazioni(token):
-    headers = {"Authorization": f"Bearer {token}"}
-    urls = [
-        "https://api.meteonetwork.it/v3/stations",
-        "https://api.meteonetwork.it/v3/stations?country=IT",
-    ]
-    for url in urls:
+def _parse_stazioni_mn(js):
+    if isinstance(js, dict):
+        js = js.get("data") or js.get("stations") or js.get("items") or []
+    if not isinstance(js, list):
+        return []
+    out = []
+    for s in js:
+        if not isinstance(s, dict):
+            continue
         try:
-            r = requests.get(url, headers=headers, timeout=30)
+            lat = float(s.get("latitude") or s.get("lat"))
+            lon = float(s.get("longitude") or s.get("lon"))
+            code = s.get("station_code") or s.get("code") or s.get("id")
+            nome = s.get("name") or s.get("place") or s.get("area") or code
+            regione = s.get("region_name") or s.get("region") or ""
+            quota_s = s.get("altitude") or s.get("elevation") or s.get("alt")
+            try:
+                quota_s = float(quota_s) if quota_s not in (None, "") else None
+            except Exception:
+                quota_s = None
+            if code and lat and lon:
+                out.append({
+                    "code": str(code),
+                    "nome": str(nome),
+                    "lat": lat,
+                    "lon": lon,
+                    "regione": str(regione),
+                    "quota": quota_s,
+                })
+        except Exception:
+            continue
+    return out
+
+
+@st.cache_data(ttl=3600)
+def mn_elenco_stazioni(token):
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "PorciniPredictor/1.0 (uso personale)",
+    }
+    tentativi = [
+        ("https://api.meteonetwork.it/v3/stations", {"country": "IT"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Molise"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Abruzzo"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Lazio"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Campania"}),
+        ("https://api.meteonetwork.it/v3/data-realtime", {"country": "IT", "region": "Molise"}),
+    ]
+    ultimo = "nessuna risposta"
+    trovate = []
+    seen = set()
+    for url, params in tentativi:
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=30)
+        except Exception as e:
+            ultimo = str(e)
+            continue
+        ultimo = f"HTTP {r.status_code}: {r.text[:180]}"
+        if r.status_code != 200:
+            continue
+        try:
+            js = r.json()
+        except Exception:
+            continue
+        for s in _parse_stazioni_mn(js):
+            if s["code"] not in seen:
+                seen.add(s["code"])
+                trovate.append(s)
+        if trovate:
+            return trovate
+    # memorizza il motivo per la sidebar (cache-friendly: lo mettiamo in un dict fittizio no)
+    st.session_state["mn_elenco_errore"] = ultimo
+    return []
+
+
+@st.cache_data(ttl=1800)
+def mn_stazioni_da_codici(token, codici):
+    """STANDARD: una GET data-realtime per codice, senza elenco BULK."""
+    if not token or not codici:
+        return []
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "PorciniPredictor/1.0 (uso personale)",
+    }
+    out = []
+    for raw in str(codici).replace(";", ",").split(","):
+        code = raw.strip().split("/")[-1].split("?")[0].strip()
+        if not code:
+            continue
+        try:
+            r = requests.get(
+                f"https://api.meteonetwork.it/v3/data-realtime/{code}",
+                headers=headers,
+                timeout=20,
+            )
             if r.status_code != 200:
                 continue
             js = r.json()
-            if isinstance(js, dict):
-                js = js.get("data") or js.get("stations") or []
-            out = []
-            for s in js:
-                try:
-                    lat = float(s.get("latitude") or s.get("lat"))
-                    lon = float(s.get("longitude") or s.get("lon"))
-                    code = s.get("station_code") or s.get("code") or s.get("id")
-                    nome = s.get("name") or s.get("place") or s.get("area") or code
-                    regione = s.get("region_name") or s.get("region") or ""
-                    quota_s = s.get("altitude") or s.get("elevation") or s.get("alt")
-                    try:
-                        quota_s = float(quota_s) if quota_s not in (None, "") else None
-                    except Exception:
-                        quota_s = None
-                    if code and lat and lon:
-                        out.append({
-                            "code": str(code),
-                            "nome": str(nome),
-                            "lat": lat,
-                            "lon": lon,
-                            "regione": str(regione),
-                            "quota": quota_s,
-                        })
-                except Exception:
-                    continue
-            if out:
-                return out
+            row = js[0] if isinstance(js, list) and js else js
+            if not isinstance(row, dict):
+                continue
+            lat = row.get("latitude") or row.get("lat")
+            lon = row.get("longitude") or row.get("lon")
+            if lat is None or lon is None:
+                continue
+            out.append({
+                "code": str(row.get("station_code") or code),
+                "nome": str(row.get("name") or row.get("place") or row.get("area") or code),
+                "lat": float(lat),
+                "lon": float(lon),
+                "regione": str(row.get("region") or row.get("region_name") or ""),
+                "quota": float(row["altitude"]) if row.get("altitude") not in (None, "") else None,
+            })
         except Exception:
             continue
-    return []
+    return out
 
 
 def punteggio_vicinanza(dist_km, d_quota, max_dist=45):
@@ -860,7 +932,7 @@ def _info_stazione(s, fonte):
 
 
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici=""):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -889,7 +961,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # 1) MeteoNetwork: stazione più vicina. Serie 30g sul punto della centralina
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
-        stazioni = mn_elenco_stazioni(mn_token) or []
+        stazioni = (mn_elenco_stazioni(mn_token) or []) + mn_stazioni_da_codici(mn_token, mn_codici)
         vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
         if vicine_mn:
             s = vicine_mn[0]
@@ -1132,10 +1204,11 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35):
+def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici=""):
     df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
+        mn_codici=mn_codici,
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
@@ -1144,10 +1217,10 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35):
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici=""):
     risultati = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        fut = {ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione): p for p in punti}
+        fut = {ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici): p for p in punti}
         for f in as_completed(fut):
             try:
                 risultati.append(f.result())
@@ -1182,6 +1255,12 @@ with st.sidebar:
     mn_pass = st.text_input("Password myMeteoNetwork", type="password", value="")
     collega_mn = st.button("Collega MeteoNetwork (una volta sola)")
     mn_token_manuale = st.text_input("Oppure incolla il token STANDARD", value="")
+    mn_codici = st.text_input(
+        "Codici stazioni MN (senza BULK)",
+        value="",
+        placeholder="es. lmb254, abc123",
+        help="Li trovi nell'URL della pagina stazione su meteonetwork.it o meteonetwork.eu",
+    )
     if st.session_state.get("mn_token"):
         st.caption("Token già in memoria in questa sessione. Non rilogga da solo.")
 
@@ -1252,15 +1331,21 @@ elif mn_token:
     st.session_state["mn_token"] = mn_token
     n_st = 0
     try:
-        n_st = len(mn_elenco_stazioni(mn_token) or [])
+        n_st = len(mn_elenco_stazioni(mn_token) or []) + len(mn_stazioni_da_codici(mn_token, mn_codici))
     except Exception:
         n_st = 0
     if n_st:
         st.sidebar.success(f"MeteoNetwork attivo · {n_st} stazioni in rete")
     else:
+        err = st.session_state.get("mn_elenco_errore", "")
         st.sidebar.warning(
-            "Token presente, ma l'elenco stazioni è vuoto. "
-            "Controlla il token oppure i Secrets su Streamlit Cloud."
+            "Token STANDARD presente, ma l'elenco stazioni è vuoto. "
+            "L'API /stations di MeteoNetwork spesso richiede il token BULK, non quello STANDARD. "
+            f"Dettaglio: {err}"
+        )
+        st.sidebar.caption(
+            "Scrivi a settore.tecnico@meteonetwork.it chiedendo un token BULK per uso personale. "
+            "Senza elenco l'app non sa quali centraline sono vicine al bosco."
         )
 else:
     st.sidebar.info("Senza MeteoNetwork uso stazioni ufficiali + modello ICON-2I. L'app funziona lo stesso.")
@@ -1283,7 +1368,7 @@ if not punti_filtrati:
 if calcola or "risultati" not in st.session_state:
     with st.spinner(f"Calcolo in parallelo su {len(punti_filtrati)} zone..."):
         st.session_state["risultati"] = calcola_tutti(
-            punti_filtrati, regole, mn_token, max_km_stazione=max_km_stazione
+            punti_filtrati, regole, mn_token, max_km_stazione=max_km_stazione, mn_codici=mn_codici
         )
         st.session_state["filtro_usato"] = {
             "regioni": regioni_sel,
