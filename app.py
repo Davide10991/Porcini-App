@@ -961,7 +961,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # 1) MeteoNetwork: stazione più vicina. Serie 30g sul punto della centralina
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
-        stazioni = (mn_elenco_stazioni(mn_token) or []) + mn_stazioni_da_codici(mn_token, mn_codici)
+        stazioni = mn_stazioni_da_codici(mn_token, mn_codici)
+        if not stazioni:
+            # /stations è BULK: non chiamarlo in automatico (genera 405/429)
+            stazioni = []
         vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
         if vicine_mn:
             s = vicine_mn[0]
@@ -1331,21 +1334,15 @@ elif mn_token:
     st.session_state["mn_token"] = mn_token
     n_st = 0
     try:
-        n_st = len(mn_elenco_stazioni(mn_token) or []) + len(mn_stazioni_da_codici(mn_token, mn_codici))
+        n_st = len(mn_stazioni_da_codici(mn_token, mn_codici))
     except Exception:
         n_st = 0
     if n_st:
         st.sidebar.success(f"MeteoNetwork attivo · {n_st} stazioni in rete")
     else:
-        err = st.session_state.get("mn_elenco_errore", "")
         st.sidebar.warning(
-            "Token STANDARD presente, ma l'elenco stazioni è vuoto. "
-            "L'API /stations di MeteoNetwork spesso richiede il token BULK, non quello STANDARD. "
-            f"Dettaglio: {err}"
-        )
-        st.sidebar.caption(
-            "Scrivi a settore.tecnico@meteonetwork.it chiedendo un token BULK per uso personale. "
-            "Senza elenco l'app non sa quali centraline sono vicine al bosco."
+            "Token STANDARD ok. Inserisci i codici stazione (es. mls059) e premi Calcola. "
+            "Non chiedo più l'elenco completo: quello è BULK e causa 429."
         )
 else:
     st.sidebar.info("Senza MeteoNetwork uso stazioni ufficiali + modello ICON-2I. L'app funziona lo stesso.")
