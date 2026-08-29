@@ -514,7 +514,7 @@ def mn_elenco_stazioni(token):
 
 @st.cache_data(ttl=1800)
 def mn_stazioni_da_codici(token, codici):
-    """STANDARD: una GET data-realtime per codice, senza elenco BULK."""
+    """STANDARD: /stations/{code} (singola) + realtime. Poche chiamate, mai in parallelo."""
     if not token or not codici:
         return []
     headers = {
@@ -523,35 +523,46 @@ def mn_stazioni_da_codici(token, codici):
     }
     out = []
     for raw in str(codici).replace(";", ",").split(","):
-        code = raw.strip().split("/")[-1].split("?")[0].strip()
+        code = raw.strip().split("/")[-1].split("?")[0].strip().lower()
         if not code:
             continue
-        try:
-            r = requests.get(
-                f"https://api.meteonetwork.it/v3/data-realtime/{code}",
-                headers=headers,
-                timeout=20,
-            )
-            if r.status_code != 200:
+        row = None
+        for url in (
+            f"https://api.meteonetwork.it/v3/stations/{code}",
+            f"https://api.meteonetwork.it/v3/data-realtime/{code}",
+        ):
+            try:
+                r = requests.get(url, headers=headers, timeout=20)
+                if r.status_code != 200:
+                    continue
+                js = r.json()
+                cand = js[0] if isinstance(js, list) and js else js
+                if isinstance(cand, dict):
+                    row = cand
+                    break
+            except Exception:
                 continue
-            js = r.json()
-            row = js[0] if isinstance(js, list) and js else js
-            if not isinstance(row, dict):
-                continue
-            lat = row.get("latitude") or row.get("lat")
-            lon = row.get("longitude") or row.get("lon")
-            if lat is None or lon is None:
-                continue
-            out.append({
-                "code": str(row.get("station_code") or code),
-                "nome": str(row.get("name") or row.get("place") or row.get("area") or code),
-                "lat": float(lat),
-                "lon": float(lon),
-                "regione": str(row.get("region") or row.get("region_name") or ""),
-                "quota": float(row["altitude"]) if row.get("altitude") not in (None, "") else None,
-            })
-        except Exception:
+        if not row:
             continue
+        lat = row.get("latitude") or row.get("lat")
+        lon = row.get("longitude") or row.get("lon")
+        if lat is None or lon is None:
+            continue
+        quota_s = row.get("altitude") or row.get("elevation")
+        try:
+            quota_s = float(quota_s) if quota_s not in (None, "") else None
+        except Exception:
+            quota_s = None
+        out.append({
+            "code": str(row.get("station_code") or code),
+            "nome": str(
+                row.get("name") or row.get("place_name") or row.get("place") or row.get("area") or code
+            ),
+            "lat": float(lat),
+            "lon": float(lon),
+            "regione": str(row.get("region") or row.get("region_name") or ""),
+            "quota": quota_s,
+        })
     return out
 
 
@@ -932,7 +943,7 @@ def _info_stazione(s, fonte):
 
 
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici=""):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -961,10 +972,9 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # 1) MeteoNetwork: stazione più vicina. Serie 30g sul punto della centralina
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
-        stazioni = mn_stazioni_da_codici(mn_token, mn_codici)
+        stazioni = list(stazioni_mn or [])
         if not stazioni:
-            # /stations è BULK: non chiamarlo in automatico (genera 405/429)
-            stazioni = []
+            stazioni = mn_stazioni_da_codici(mn_token, mn_codici)
         vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
         if vicine_mn:
             s = vicine_mn[0]
@@ -1207,11 +1217,11 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici=""):
+def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None):
     df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
-        mn_codici=mn_codici,
+        mn_codici=mn_codici, stazioni_mn=stazioni_mn,
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
@@ -1220,10 +1230,13 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici=""):
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici=""):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None):
     risultati = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        fut = {ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici): p for p in punti}
+        fut = {
+            ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn): p
+            for p in punti
+        }
         for f in as_completed(fut):
             try:
                 risultati.append(f.result())
@@ -1362,10 +1375,23 @@ if not punti_filtrati:
     st.warning("Seleziona almeno una regione e un tipo di bosco nella sidebar.")
     st.stop()
 
+stazioni_mn = mn_stazioni_da_codici(mn_token, mn_codici) if (mn_token and mn_codici) else []
+if mn_token and mn_codici:
+    if stazioni_mn:
+        st.sidebar.success("Stazioni MN lette: " + ", ".join(f"{s['nome']} ({s['code']})" for s in stazioni_mn))
+    else:
+        st.sidebar.error(
+            "Codici inseriti ma nessuna stazione letta. Aspetta se c'è stato un 429, "
+            "poi un solo Calcola. Verifica i codici sulla scheda MN."
+        )
+
 if calcola or "risultati" not in st.session_state:
-    with st.spinner(f"Calcolo in parallelo su {len(punti_filtrati)} zone..."):
+    with st.spinner(f"Calcolo su {len(punti_filtrati)} zone..."):
         st.session_state["risultati"] = calcola_tutti(
-            punti_filtrati, regole, mn_token, max_km_stazione=max_km_stazione, mn_codici=mn_codici
+            punti_filtrati, regole, mn_token,
+            max_km_stazione=max_km_stazione,
+            mn_codici=mn_codici,
+            stazioni_mn=stazioni_mn,
         )
         st.session_state["filtro_usato"] = {
             "regioni": regioni_sel,
