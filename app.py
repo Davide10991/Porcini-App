@@ -13,6 +13,7 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 try:
     from meteostat import Stations, Daily
@@ -638,6 +639,41 @@ def _mn_rows_to_df(righe):
     return df.fillna(0)
 
 
+@st.cache_data(ttl=3600)
+def mn_serie_giornaliera(token, code, days=10):
+    """Giorni veri del pluviometro. 1 richiesta/giorno, pausa 13s (limite 5/min)."""
+    if not token or not code:
+        return None
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "PorciniPredictor/1.0 (uso personale)",
+    }
+    righe = []
+    oggi = datetime.now().date()
+    n = min(int(days), 10)
+    for i in range(n):
+        d = (oggi - timedelta(days=i)).isoformat()
+        try:
+            r = requests.get(
+                f"https://api.meteonetwork.it/v3/data-daily/{code}",
+                headers=headers,
+                params={"observation_date": d},
+                timeout=20,
+            )
+            if r.status_code == 429:
+                break
+            if r.status_code == 200:
+                js = r.json()
+                row = js[0] if isinstance(js, list) and js else js
+                if isinstance(row, dict):
+                    righe.append(row)
+        except Exception:
+            pass
+        if i < n - 1:
+            time.sleep(13)
+    return _mn_rows_to_df(righe)
+
+
 @st.cache_data(ttl=1800)
 def mn_dati_stazione(token, code, days=30):
     """Una o poche chiamate per stazione. Niente 30 GET: quello genera 429 e poi sparisce MN."""
@@ -943,7 +979,7 @@ def _info_stazione(s, fonte):
 
 
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -978,19 +1014,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
         if vicine_mn:
             s = vicine_mn[0]
-            df_mn = mn_dati_stazione(mn_token, s["code"], days)
+            df_mn = None
+            if serie_mn and s.get("code") in (serie_mn or {}):
+                df_mn = serie_mn.get(s["code"])
+            if df_mn is None:
+                df_mn = mn_dati_stazione(mn_token, s["code"], days)
             df_punto_staz = None
             try:
                 df_punto_staz, _, _, _ = get_openmeteo_bundle(s["lat"], s["lon"], days)
             except Exception:
                 df_punto_staz = None
             serie = df_punto_staz if df_punto_staz is not None else storico_om
+            n_pluvio = 0
             if serie is not None and df_mn is not None and len(df_mn):
                 serie = serie.copy()
+                n_pluvio = int(df_mn["precip"].notna().sum()) if "precip" in df_mn.columns else len(df_mn)
                 for _, row in df_mn.iterrows():
                     if pd.isna(row.get("date")):
                         continue
-                    mask = serie["date"] == row["date"]
+                    mask = pd.to_datetime(serie["date"]).dt.normalize() == pd.to_datetime(row["date"]).normalize()
                     if mask.any() and not pd.isna(row.get("precip")):
                         serie.loc[mask, "precip"] = row["precip"]
             if serie is not None:
@@ -1000,7 +1042,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 fonte = (
                     f"MeteoNetwork {s.get('nome')} a {s.get('distanza_km')} km"
                     + (f" · oggi pluviometro {oggi_mm} mm" if oggi_mm is not None else "")
-                    + " · 30g sul punto stazione"
+                    + (f" · {n_pluvio} gg da pluviometro" if n_pluvio else " · 30g modello sul punto stazione")
                 )
                 info = _info_stazione(s, fonte)
                 info["pioggia_modello_30g"] = (
@@ -1217,11 +1259,11 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None):
+def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None):
     df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
-        mn_codici=mn_codici, stazioni_mn=stazioni_mn,
+        mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
@@ -1230,11 +1272,11 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None, serie_mn=None):
     risultati = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         fut = {
-            ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn): p
+            ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn): p
             for p in punti
         }
         for f in as_completed(fut):
@@ -1386,12 +1428,21 @@ if mn_token and mn_codici:
         )
 
 if calcola or "risultati" not in st.session_state:
+    serie_mn = {}
+    if calcola and stazioni_mn:
+        with st.spinner(
+            f"Scarico {min(10, 10)} giorni veri da {len(stazioni_mn)} pluviometri MN "
+            "(circa 2 minuti a stazione, limite 5 richieste/min)..."
+        ):
+            for s in stazioni_mn:
+                serie_mn[s["code"]] = mn_serie_giornaliera(mn_token, s["code"], 10)
     with st.spinner(f"Calcolo su {len(punti_filtrati)} zone..."):
         st.session_state["risultati"] = calcola_tutti(
             punti_filtrati, regole, mn_token,
             max_km_stazione=max_km_stazione,
             mn_codici=mn_codici,
             stazioni_mn=stazioni_mn,
+            serie_mn=serie_mn,
         )
         st.session_state["filtro_usato"] = {
             "regioni": regioni_sel,
