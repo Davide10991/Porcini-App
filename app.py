@@ -639,39 +639,55 @@ def _mn_rows_to_df(righe):
     return df.fillna(0)
 
 
-@st.cache_data(ttl=3600)
-def mn_serie_giornaliera(token, code, days=10):
-    """Giorni veri del pluviometro. 1 richiesta/giorno, pausa 13s (limite 5/min)."""
-    if not token or not code:
-        return None
+def mn_giorno_pluviometro(token, code, giorno):
+    """Un giorno. I successi restano in sessione; i 429 non si cachano."""
+    store = st.session_state.setdefault("mn_giorni", {})
+    key = f"{code}|{giorno}"
+    if key in store:
+        return {"ok": True, "status": 200, "row": store[key]}
     headers = {
         "Authorization": f"Bearer {token}",
         "User-Agent": "PorciniPredictor/1.0 (uso personale)",
     }
-    righe = []
+    r = requests.get(
+        f"https://api.meteonetwork.it/v3/data-daily/{code}",
+        headers=headers,
+        params={"observation_date": giorno},
+        timeout=15,
+    )
+    if r.status_code != 200:
+        return {"ok": False, "status": r.status_code, "row": None}
+    js = r.json()
+    row = js[0] if isinstance(js, list) and js else js
+    if isinstance(row, dict):
+        store[key] = row
+        return {"ok": True, "status": 200, "row": row}
+    return {"ok": False, "status": r.status_code, "row": None}
+
+
+def mn_serie_giornaliera(token, code, days=21, nuovi_per_volta=4):
+    """Fino a 21 giorni. Ogni Calcola scarica al massimo 4 giorni nuovi."""
+    if not token or not code:
+        return None, 0, days
     oggi = datetime.now().date()
-    n = min(int(days), 10)
-    for i in range(n):
+    righe = []
+    nuovi = 0
+    for i in range(min(int(days), 21)):
         d = (oggi - timedelta(days=i)).isoformat()
-        try:
-            r = requests.get(
-                f"https://api.meteonetwork.it/v3/data-daily/{code}",
-                headers=headers,
-                params={"observation_date": d},
-                timeout=20,
-            )
-            if r.status_code == 429:
-                break
-            if r.status_code == 200:
-                js = r.json()
-                row = js[0] if isinstance(js, list) and js else js
-                if isinstance(row, dict):
-                    righe.append(row)
-        except Exception:
-            pass
-        if i < n - 1:
-            time.sleep(13)
-    return _mn_rows_to_df(righe)
+        store = st.session_state.setdefault("mn_giorni", {})
+        key = f"{code}|{d}"
+        if key in store:
+            righe.append(store[key])
+            continue
+        if nuovi >= nuovi_per_volta:
+            continue
+        pack = mn_giorno_pluviometro(token, code, d)
+        if pack.get("status") == 429:
+            break
+        if pack.get("ok") and pack.get("row"):
+            righe.append(pack["row"])
+        nuovi += 1
+    return _mn_rows_to_df(righe), len(righe), days
 
 
 @st.cache_data(ttl=1800)
@@ -1421,6 +1437,8 @@ stazioni_mn = mn_stazioni_da_codici(mn_token, mn_codici) if (mn_token and mn_cod
 if mn_token and mn_codici:
     if stazioni_mn:
         st.sidebar.success("Stazioni MN lette: " + ", ".join(f"{s['nome']} ({s['code']})" for s in stazioni_mn))
+        if st.session_state.get("mn_progresso"):
+            st.sidebar.info("Pluviometro " + st.session_state["mn_progresso"] + ". Ripremi Calcola per aggiungere altri giorni (max 4 per volta).")
     else:
         st.sidebar.error(
             "Codici inseriti ma nessuna stazione letta. Aspetta se c'è stato un 429, "
@@ -1430,12 +1448,13 @@ if mn_token and mn_codici:
 if calcola or "risultati" not in st.session_state:
     serie_mn = {}
     if calcola and stazioni_mn:
-        with st.spinner(
-            f"Scarico {min(10, 10)} giorni veri da {len(stazioni_mn)} pluviometri MN "
-            "(circa 2 minuti a stazione, limite 5 richieste/min)..."
-        ):
+        with st.spinner(f"Scarico fino a 4 giorni nuovi di pluviometro (obiettivo 21 gg)..."):
+            report = []
             for s in stazioni_mn:
-                serie_mn[s["code"]] = mn_serie_giornaliera(mn_token, s["code"], 10)
+                df_s, n_ok, n_tot = mn_serie_giornaliera(mn_token, s["code"], 21, 4)
+                serie_mn[s["code"]] = df_s
+                report.append(f"{s['nome']}: {n_ok}/{n_tot} gg")
+            st.session_state["mn_progresso"] = " · ".join(report)
     with st.spinner(f"Calcolo su {len(punti_filtrati)} zone..."):
         st.session_state["risultati"] = calcola_tutti(
             punti_filtrati, regole, mn_token,
