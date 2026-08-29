@@ -665,14 +665,14 @@ def mn_giorno_pluviometro(token, code, giorno):
     return {"ok": False, "status": r.status_code, "row": None}
 
 
-def mn_serie_giornaliera(token, code, days=21, nuovi_per_volta=4):
-    """Fino a 21 giorni. Ogni Calcola scarica al massimo 4 giorni nuovi."""
+def mn_serie_giornaliera(token, code, days=30, nuovi_per_volta=4):
+    """Fino a 30 giorni. Ogni Calcola scarica al massimo 4 giorni nuovi."""
     if not token or not code:
         return None, 0, days
     oggi = datetime.now().date()
     righe = []
     nuovi = 0
-    for i in range(min(int(days), 21)):
+    for i in range(min(int(days), 30)):
         d = (oggi - timedelta(days=i)).isoformat()
         store = st.session_state.setdefault("mn_giorni", {})
         key = f"{code}|{d}"
@@ -1061,6 +1061,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     + (f" · {n_pluvio} gg da pluviometro" if n_pluvio else " · 30g modello sul punto stazione")
                 )
                 info = _info_stazione(s, fonte)
+                giorni_txt = []
+                if df_mn is not None and len(df_mn) and "precip" in df_mn.columns:
+                    tmp = df_mn.dropna(subset=["date"]).sort_values("date")
+                    for _, rr in tmp.iterrows():
+                        giorni_txt.append(f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm")
+                info["giorni_pluviometro"] = giorni_txt
                 info["pioggia_modello_30g"] = (
                     round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
                 )
@@ -1448,10 +1454,10 @@ if mn_token and mn_codici:
 if calcola or "risultati" not in st.session_state:
     serie_mn = {}
     if calcola and stazioni_mn:
-        with st.spinner(f"Scarico fino a 4 giorni nuovi di pluviometro (obiettivo 21 gg)..."):
+        with st.spinner(f"Scarico fino a 4 giorni nuovi di pluviometro (obiettivo 30 gg)..."):
             report = []
             for s in stazioni_mn:
-                df_s, n_ok, n_tot = mn_serie_giornaliera(mn_token, s["code"], 21, 4)
+                df_s, n_ok, n_tot = mn_serie_giornaliera(mn_token, s["code"], 30, 4)
                 serie_mn[s["code"]] = df_s
                 report.append(f"{s['nome']}: {n_ok}/{n_tot} gg")
             st.session_state["mn_progresso"] = " · ".join(report)
@@ -1521,7 +1527,8 @@ with col1:
             Pioggia 30g: {d.get('precip_totale_30g', 'n/d')} mm<br>
             T max media: {d.get('t_max_media', 'n/d')} °C<br>
             Fonte: {r.get('meteo', {}).get('fonte', 'n/d')}<br>
-            Stazione: {r.get('meteo', {}).get('stazione', 'n/d')}
+            Stazione: {r.get('meteo', {}).get('stazione', 'n/d')}<br>
+            Giorni pluviometro:<br>{'<br>'.join(r.get('meteo', {}).get('giorni_pluviometro') or ['ancora nessuno'])}
             """
             folium.CircleMarker(
                 location=[r["lat"], r["lon"]],
@@ -1561,6 +1568,13 @@ with col2:
             dist = meteo.get("distanza_km")
             dist_txt = f" ({dist} km)" if dist is not None else ""
             st.write(f"• Fonte usata per il punteggio: **{meteo.get('fonte', 'n/d')}**")
+            giorni_p = meteo.get("giorni_pluviometro") or []
+            if giorni_p:
+                st.write("• Mm veri già scaricati:")
+                for g in giorni_p:
+                    st.write(f"  – {g}")
+            else:
+                st.write("• Mm veri già scaricati: nessuno (ripremi Calcola, senza svuotare la cache)")
             if meteo.get("pioggia_modello_30g") is not None or meteo.get("pioggia_stazione_30g") is not None:
                 st.write(
                     f"• Confronto 30 gg — modello sul bosco: **{meteo.get('pioggia_modello_30g')} mm** · "
