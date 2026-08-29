@@ -407,7 +407,12 @@ def mn_login(email, password):
     try:
         r = requests.post(
             "https://api.meteonetwork.it/v3/login",
-            data={"email": email, "password": password},
+            data={
+                "email": email,
+                "username": email,
+                "user": email,
+                "password": password,
+            },
             headers={"User-Agent": "PorciniPredictor/1.0 (uso personale)"},
             timeout=20,
         )
@@ -552,16 +557,15 @@ def _mn_rows_to_df(righe):
 
 @st.cache_data(ttl=1800)
 def mn_dati_stazione(token, code, days=30):
+    """Una o poche chiamate per stazione. Niente 30 GET: quello genera 429 e poi sparisce MN."""
     headers = {"Authorization": f"Bearer {token}"}
     oggi = datetime.now().date()
-    start = (oggi - timedelta(days=days)).isoformat()
+    start = (oggi - timedelta(days=min(days, 16))).isoformat()
     end = oggi.isoformat()
 
-    # prova prima gli endpoint giornalieri (se disponibili sul token)
     for url, params in [
         (f"https://api.meteonetwork.it/v3/data-daily/{code}", {"start": start, "end": end}),
         (f"https://api.meteonetwork.it/v3/daily/{code}", {"from": start, "to": end}),
-        (f"https://api.meteonetwork.it/v3/data-station/{code}", {"type": "daily", "start": start, "end": end}),
     ]:
         try:
             r = requests.get(url, headers=headers, params=params, timeout=20)
@@ -572,12 +576,11 @@ def mn_dati_stazione(token, code, days=30):
                 js = js.get("data") or js.get("values") or js.get("daily") or []
             if isinstance(js, list) and js:
                 df = _mn_rows_to_df(js)
-                if df is not None and len(df) >= 5:
+                if df is not None and len(df) >= 3:
                     return df
         except Exception:
             continue
 
-    righe = []
     try:
         r = requests.get(
             f"https://api.meteonetwork.it/v3/data-realtime/{code}",
@@ -586,35 +589,12 @@ def mn_dati_stazione(token, code, days=30):
         )
         if r.status_code == 200:
             js = r.json()
-            if isinstance(js, list) and js:
-                righe.append(js[0])
-            elif isinstance(js, dict):
-                righe.append(js)
+            row = js[0] if isinstance(js, list) and js else js
+            if isinstance(row, dict):
+                return _mn_rows_to_df([row])
     except Exception:
         pass
-
-    for i in range(1, min(days, 31)):
-        d = (oggi - timedelta(days=i)).isoformat()
-        try:
-            r = requests.get(
-                f"https://api.meteonetwork.it/v3/data-realtime/{code}",
-                headers=headers,
-                params={"observation_date": d},
-                timeout=12,
-            )
-            if r.status_code != 200:
-                continue
-            js = r.json()
-            if isinstance(js, list) and js:
-                righe.append(js[0])
-            elif isinstance(js, dict) and (
-                js.get("daily_rain") is not None or js.get("observation_date")
-            ):
-                righe.append(js)
-        except Exception:
-            continue
-
-    return _mn_rows_to_df(righe)
+    return None
 
 
 @st.cache_data(ttl=86400)
@@ -906,18 +886,43 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return None
         return round(float(df["precip"].sum(skipna=True)), 1)
 
-    # 1) MeteoNetwork solo se davvero vicina
+    # 1) MeteoNetwork: stazione più vicina. Serie 30g sul punto della centralina
+    #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
-        stazioni = mn_elenco_stazioni(mn_token)
-        for s in mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=min(max_km_stazione, 25)):
+        stazioni = mn_elenco_stazioni(mn_token) or []
+        vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
+        if vicine_mn:
+            s = vicine_mn[0]
             df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            if df_mn is not None and df_mn["precip"].notna().sum() >= 5:
-                info = _info_stazione(s, "MeteoNetwork (pluviometro reale)")
-                info["pioggia_modello_30g"] = info.get("pioggia_modello_30g") or (
+            df_punto_staz = None
+            try:
+                df_punto_staz, _, _, _ = get_openmeteo_bundle(s["lat"], s["lon"], days)
+            except Exception:
+                df_punto_staz = None
+            serie = df_punto_staz if df_punto_staz is not None else storico_om
+            if serie is not None and df_mn is not None and len(df_mn):
+                serie = serie.copy()
+                for _, row in df_mn.iterrows():
+                    if pd.isna(row.get("date")):
+                        continue
+                    mask = serie["date"] == row["date"]
+                    if mask.any() and not pd.isna(row.get("precip")):
+                        serie.loc[mask, "precip"] = row["precip"]
+            if serie is not None:
+                oggi_mm = None
+                if df_mn is not None and len(df_mn) and "precip" in df_mn.columns:
+                    oggi_mm = df_mn.iloc[-1]["precip"]
+                fonte = (
+                    f"MeteoNetwork {s.get('nome')} a {s.get('distanza_km')} km"
+                    + (f" · oggi pluviometro {oggi_mm} mm" if oggi_mm is not None else "")
+                    + " · 30g sul punto stazione"
+                )
+                info = _info_stazione(s, fonte)
+                info["pioggia_modello_30g"] = (
                     round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
                 )
-                info["pioggia_stazione_30g"] = _mm(df_mn)
-                return df_mn, info, forecast, soil, vento
+                info["pioggia_stazione_30g"] = _mm(serie)
+                return serie, info, forecast, soil, vento
 
     # 2) ufficiale SOLO se è vicina al bosco (altrimenti i mm non c'entrano)
     limite_ufficiale = min(18, max_km_stazione)
@@ -1173,7 +1178,7 @@ with st.sidebar:
         "Account gratis su my.meteonetwork.it (non meteonetwork.it). "
         "Poi email/password qui, oppure genera il token una volta e incollalo."
     )
-    mn_email = st.text_input("Email myMeteoNetwork", value="")
+    mn_email = st.text_input("Username o email myMeteoNetwork", value="")
     mn_pass = st.text_input("Password myMeteoNetwork", type="password", value="")
     collega_mn = st.button("Collega MeteoNetwork (una volta sola)")
     mn_token_manuale = st.text_input("Oppure incolla il token STANDARD", value="")
@@ -1219,7 +1224,21 @@ with st.sidebar:
 
 regole = {"pioggia_min": pioggia_min, "pioggia_max": pioggia_max}
 
-mn_token = (mn_token_manuale or "").strip() or st.session_state.get("mn_token") or ""
+def _token_dai_secrets():
+    try:
+        return (
+            str(st.secrets.get("METEONETWORK_TOKEN", "") or "").strip()
+            or str(st.secrets.get("mn_token", "") or "").strip()
+        )
+    except Exception:
+        return ""
+
+
+mn_token = (
+    (mn_token_manuale or "").strip()
+    or st.session_state.get("mn_token")
+    or _token_dai_secrets()
+)
 if collega_mn:
     tok, err = mn_login(mn_email, mn_pass)
     if tok:
@@ -1231,7 +1250,18 @@ if collega_mn:
         st.sidebar.error(err or "Login MeteoNetwork non riuscito")
 elif mn_token:
     st.session_state["mn_token"] = mn_token
-    st.sidebar.success("MeteoNetwork attivo (token in sessione)")
+    n_st = 0
+    try:
+        n_st = len(mn_elenco_stazioni(mn_token) or [])
+    except Exception:
+        n_st = 0
+    if n_st:
+        st.sidebar.success(f"MeteoNetwork attivo · {n_st} stazioni in rete")
+    else:
+        st.sidebar.warning(
+            "Token presente, ma l'elenco stazioni è vuoto. "
+            "Controlla il token oppure i Secrets su Streamlit Cloud."
+        )
 else:
     st.sidebar.info("Senza MeteoNetwork uso stazioni ufficiali + modello ICON-2I. L'app funziona lo stesso.")
 
