@@ -514,6 +514,47 @@ def mn_elenco_stazioni(token):
 
 
 @st.cache_data(ttl=1800)
+def _path_codici_salvati():
+    return Path(__file__).resolve().parent / "mn_codici_utente.txt"
+
+
+def carica_codici_salvati():
+    out = []
+    seen = set()
+    path = _path_codici_salvati()
+    if path.exists():
+        try:
+            for p in path.read_text(encoding="utf-8").replace(";", ",").split(","):
+                c = p.strip().lower()
+                if c and c not in seen:
+                    seen.add(c)
+                    out.append(c)
+        except Exception:
+            pass
+    for c in (st.session_state.get("mn_codici_lista") or []):
+        c = str(c).strip().lower()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def salva_codici_utente(lista):
+    puliti = []
+    seen = set()
+    for c in lista:
+        c = str(c).strip().lower()
+        if c and c not in seen:
+            seen.add(c)
+            puliti.append(c)
+    st.session_state["mn_codici_lista"] = puliti
+    try:
+        _path_codici_salvati().write_text(", ".join(puliti), encoding="utf-8")
+    except Exception:
+        pass
+    return puliti
+
+
 def mn_stazioni_da_codici(token, codici):
     """STANDARD: /stations/{code} (singola) + realtime. Poche chiamate, mai in parallelo."""
     if not token or not codici:
@@ -1334,13 +1375,43 @@ with st.sidebar:
     mn_email = st.text_input("Username o email myMeteoNetwork", value="")
     mn_pass = st.text_input("Password myMeteoNetwork", type="password", value="")
     collega_mn = st.button("Collega MeteoNetwork (una volta sola)")
-    mn_token_manuale = st.text_input("Oppure incolla il token STANDARD", value="")
-    mn_codici = st.text_input(
-        "Codici stazioni MN (senza BULK)",
-        value="",
-        placeholder="es. lmb254, abc123",
-        help="Li trovi nell'URL della pagina stazione su meteonetwork.it o meteonetwork.eu",
+    try:
+        _tok_saved = str(st.secrets.get("METEONETWORK_TOKEN", "") or "").strip()
+        _cod_saved = str(st.secrets.get("METEONETWORK_CODICI", "") or st.secrets.get("mn_codici", "") or "").strip()
+    except Exception:
+        _tok_saved, _cod_saved = "", ""
+    mn_token_manuale = st.text_input(
+        "Oppure incolla il token STANDARD",
+        value=_tok_saved,
+        type="password",
+        help="Meglio salvarlo in Manage app → Settings → Secrets, così non lo reinserisci.",
     )
+    codici_lista = carica_codici_salvati()
+    if _cod_saved:
+        for c in _cod_saved.replace(";", ",").split(","):
+            c = c.strip().lower()
+            if c and c not in codici_lista:
+                codici_lista.append(c)
+        codici_lista = salva_codici_utente(codici_lista)
+    nuovo_codice = st.text_input(
+        "Aggiungi codice stazione MN",
+        value="",
+        placeholder="es. mls071",
+        help="Un codice alla volta, oppure più separati da virgola. Restano salvati.",
+    )
+    if st.button("Salva stazione") and nuovo_codice.strip():
+        for c in nuovo_codice.replace(";", ",").split(","):
+            c = c.strip().lower()
+            if c and c not in codici_lista:
+                codici_lista.append(c)
+        codici_lista = salva_codici_utente(codici_lista)
+        st.rerun()
+    if codici_lista:
+        st.caption("Stazioni salvate: " + ", ".join(codici_lista))
+        if st.button("Cancella stazioni salvate"):
+            salva_codici_utente([])
+            st.rerun()
+    mn_codici = ", ".join(codici_lista)
     if st.session_state.get("mn_token"):
         st.caption("Token già in memoria in questa sessione. Non rilogga da solo.")
 
