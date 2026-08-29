@@ -680,9 +680,37 @@ def _mn_rows_to_df(righe):
     return df.fillna(0)
 
 
-def mn_giorno_pluviometro(token, code, giorno):
-    """Un giorno. I successi restano in sessione; i 429 non si cachano."""
+def _path_giorni_salvati():
+    return Path(__file__).resolve().parent / "mn_giorni_utente.json"
+
+
+def _carica_giorni_file():
     store = st.session_state.setdefault("mn_giorni", {})
+    path = _path_giorni_salvati()
+    if path.exists() and not st.session_state.get("mn_giorni_file_ok"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                store.update(data)
+            st.session_state["mn_giorni_file_ok"] = True
+        except Exception:
+            pass
+    return store
+
+
+def _salva_giorni_file():
+    try:
+        _path_giorni_salvati().write_text(
+            json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def mn_giorno_pluviometro(token, code, giorno):
+    """Un giorno. Successi in sessione e su file; i 429 non si cachano."""
+    store = _carica_giorni_file()
     key = f"{code}|{giorno}"
     if key in store:
         return {"ok": True, "status": 200, "row": store[key]}
@@ -702,6 +730,8 @@ def mn_giorno_pluviometro(token, code, giorno):
     row = js[0] if isinstance(js, list) and js else js
     if isinstance(row, dict):
         store[key] = row
+        st.session_state["mn_giorni"] = store
+        _salva_giorni_file()
         return {"ok": True, "status": 200, "row": row}
     return {"ok": False, "status": r.status_code, "row": None}
 
@@ -713,9 +743,9 @@ def mn_serie_giornaliera(token, code, days=30, nuovi_per_volta=4):
     oggi = datetime.now().date()
     righe = []
     nuovi = 0
+    store = _carica_giorni_file()
     for i in range(min(int(days), 30)):
         d = (oggi - timedelta(days=i)).isoformat()
-        store = st.session_state.setdefault("mn_giorni", {})
         key = f"{code}|{d}"
         if key in store:
             righe.append(store[key])
@@ -727,7 +757,10 @@ def mn_serie_giornaliera(token, code, days=30, nuovi_per_volta=4):
             break
         if pack.get("ok") and pack.get("row"):
             righe.append(pack["row"])
+            store[key] = pack["row"]
         nuovi += 1
+    st.session_state["mn_giorni"] = store
+    _salva_giorni_file()
     return _mn_rows_to_df(righe), len(righe), days
 
 
