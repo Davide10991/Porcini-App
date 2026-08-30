@@ -1202,10 +1202,21 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # 0) WeatherCloud: mese di pioggia in una chiamata, senza token
     if usa_wc:
         cat = wc_catalogo()
-        vicine_wc = mn_stazioni_vicine(lat, lon, cat, quota=quota, n=3, max_km=max_km_stazione)
+        vicine_wc = mn_stazioni_vicine(lat, lon, cat, quota=quota, n=8, max_km=max_km_stazione)
         if vicine_wc:
-            s = vicine_wc[0]
-            df_wc = wc_mese_pioggia(s.get("id") or s["code"])
+            migliore = None
+            df_wc = None
+            for cand in vicine_wc:
+                df_c = wc_mese_pioggia(cand.get("id") or cand["code"])
+                mm_c = 0.0
+                if df_c is not None and len(df_c) and "precip" in df_c.columns:
+                    mm_c = float(df_c["precip"].sum(skipna=True))
+                dist = float(cand.get("distanza_km") or 99)
+                rank = (mm_c, -dist)
+                if migliore is None or rank > migliore[0]:
+                    migliore = (rank, cand, df_c, mm_c)
+            s = migliore[1] if migliore else vicine_wc[0]
+            df_wc = migliore[2] if migliore else None
             oggi = wc_oggi(s.get("id") or s["code"])
             if df_wc is not None and len(df_wc):
                 df_mm = df_wc.copy()
@@ -1236,7 +1247,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     df_out = df_mm
                 oggi_mm = oggi.get("rain") if oggi else None
                 fonte = (
-                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km"
+                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km (più umida nel raggio)"
                     + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
                     + f" · {n_pluvio} gg da pluviometro"
                 )
