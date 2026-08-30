@@ -1313,6 +1313,44 @@ def mn_catalogo_pubblico():
     return out
 
 
+CAPUT_FRIGORIS = {
+    "valle castellana": "TE080",
+    "rocca santa maria": "TE106",
+}
+
+
+@st.cache_data(ttl=1800)
+def cf_scheda(station_id):
+    """Pioggia giornaliera / mensile / annuale da caputfrigoris.it."""
+    try:
+        r = requests.get(
+            f"https://www.caputfrigoris.it/station.php?id={station_id}",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=25,
+        )
+        t = r.text or ""
+    except Exception:
+        return None
+    idx = t.find("Pioggia")
+    blocco = t[idx: idx + 900] if idx >= 0 else ""
+    nums = re.findall(r"(\d+(?:\.\d+)?)\s*mm", blocco, flags=re.I)
+    oggi = mese = anno = None
+    try:
+        if len(nums) >= 1:
+            oggi = float(nums[0])
+        if len(nums) >= 2:
+            mese = float(nums[1])
+        if len(nums) >= 3:
+            anno = float(nums[2])
+    except Exception:
+        return None
+    nome = station_id
+    m = re.search(r"<title>([^<]+)", t, flags=re.I)
+    if m:
+        nome = m.group(1).split("-")[0].replace("Stazione:", "").strip() or station_id
+    return {"id": station_id, "nome": nome, "oggi_mm": oggi, "mese_mm": mese, "anno_mm": anno}
+
+
 @st.cache_data(ttl=3600)
 def mn_archivio_pubblico(code, mesi=2):
     """Giorni dalla pagina /archive della stazione. Niente token."""
@@ -1411,7 +1449,7 @@ def wc_oggi(device_id):
 
 
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona=""):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -1436,6 +1474,50 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df is None or "precip" not in df.columns:
             return None
         return round(float(df["precip"].sum(skipna=True)), 1)
+
+    # Caput Frigoris (Valle Castellana / Rocca Santa Maria)
+    nome_l = (nome_zona or "").lower()
+    cf_id = None
+    for chiave, sid in CAPUT_FRIGORIS.items():
+        if chiave in nome_l:
+            cf_id = sid
+            break
+    if cf_id:
+        cf = cf_scheda(cf_id)
+        if cf and cf.get("mese_mm") is not None:
+            oggi = datetime.now().date()
+            rows = []
+            for i in range(30):
+                d = oggi - timedelta(days=29 - i)
+                mm = 0.0
+                if i == 14:
+                    mm = max(0.0, float(cf["mese_mm"]) - float(cf.get("oggi_mm") or 0))
+                if i == 29:
+                    mm = float(cf.get("oggi_mm") or 0)
+                rec = {"date": pd.Timestamp(d), "precip": mm}
+                if storico_om is not None and "t_max" in storico_om.columns:
+                    pass
+                rows.append(rec)
+            df_cf = pd.DataFrame(rows)
+            if storico_om is not None:
+                tmp = storico_om.copy()
+                tmp["date"] = pd.to_datetime(tmp["date"]).dt.normalize()
+                df_cf = df_cf.merge(tmp[["date", "t_max", "t_min"]], on="date", how="left")
+            info = {
+                "fonte": (
+                    f"Caput Frigoris {cf.get('nome')} ({cf_id}) · "
+                    f"oggi {cf.get('oggi_mm')} mm · mese {cf.get('mese_mm')} mm"
+                ),
+                "stazione": cf.get("nome"),
+                "distanza_km": 0,
+                "pioggia_stazione_30g": cf.get("mese_mm"),
+                "giorni_pluviometro": [
+                    f"oggi: {cf.get('oggi_mm')} mm",
+                    f"mese in corso: {cf.get('mese_mm')} mm",
+                    f"anno: {cf.get('anno_mm')} mm",
+                ],
+            }
+            return df_cf, info, forecast, soil, vento
 
     # 0) WeatherCloud solo se NON c'è una MeteoNetwork nel raggio
     cat_mn_pre = mn_catalogo_pubblico()
@@ -1548,10 +1630,19 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             if serie is not None:
                 serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
                 if df_mn is not None and len(df_mn):
-                    for _, row in df_mn.iterrows():
-                        mask = serie["date"] == pd.to_datetime(row["date"]).normalize()
-                        if mask.any() and not pd.isna(row.get("precip")):
-                            serie.loc[mask, "precip"] = row["precip"]
+                    df_mn = df_mn.copy()
+                    df_mn["date"] = pd.to_datetime(df_mn["date"]).dt.normalize()
+                    taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+                    df_mn30 = df_mn[df_mn["date"] >= taglio].copy()
+                    if "t_max" not in df_mn30.columns or df_mn30["t_max"].isna().all():
+                        if "t_max" in serie.columns:
+                            df_mn30 = df_mn30.merge(
+                                serie[["date", "t_max", "t_min"]].drop_duplicates("date"),
+                                on="date", how="left", suffixes=("", "_om"),
+                            )
+                            if "t_max_om" in df_mn30.columns:
+                                df_mn30["t_max"] = df_mn30["t_max"].fillna(df_mn30["t_max_om"])
+                    serie = df_mn30 if len(df_mn30) else serie
                 elif s.get("oggi_mm") is not None:
                     oggi_d = pd.Timestamp(datetime.now().date())
                     mask = serie["date"] == oggi_d
@@ -1569,12 +1660,15 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 info = _info_stazione(s, fonte)
                 info["giorni_pluviometro"] = []
                 if df_mn is not None and len(df_mn):
+                    taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
                     for _, rr in df_mn.dropna(subset=["date"]).sort_values("date").iterrows():
+                        if pd.to_datetime(rr["date"]) < taglio:
+                            continue
                         if float(rr.get("precip") or 0) >= 0.2:
                             info["giorni_pluviometro"].append(
                                 f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
                             )
-                    info["pioggia_stazione_30g"] = _mm(df_mn)
+                    info["pioggia_stazione_30g"] = _mm(serie) if serie is not None else _mm(df_mn)
                 else:
                     if s.get("mese_mm") is not None:
                         info["giorni_pluviometro"].append(f"mese in corso (tabella MN): {s['mese_mm']} mm")
@@ -1683,18 +1777,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             info["pioggia_stazione_30g"] = _mm(df_st)
             return df_st, info, forecast, soil, vento
 
-    # 3) default: pioggia del MODELLO sul punto del bosco (non un aeroporto a 40 km)
-    if storico_om is not None:
-        vicine = stazioni_ufficiali_vicine(lat, lon, quota=quota, n=1, max_km=80)
-        if vicine:
-            s = vicine[0]
-            df_st = get_stazione_dati(s["id"], days)
-            info["stazione"] = f"{s['nome']} (solo confronto, {s['distanza_km']} km)"
-            info["distanza_km"] = s["distanza_km"]
-            info["quota_stazione"] = s.get("quota")
-            info["pioggia_stazione_30g"] = _mm(df_st)
-        info["fonte"] = "ICON-2I 2 km sul bosco (stazione ufficiale troppo lontana per i mm)"
-        return storico_om, info, forecast, soil, vento
+    info["fonte"] = "Nessuna stazione MeteoNetwork/Caput Frigoris nel raggio"
     return None, info, forecast, soil, vento
 
 
@@ -1850,6 +1933,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "nota_vento": vento.get("nota_vento"),
     }
 
+    # Poca acqua nel mese: non può essere una buttata "ALTA"
+    if precip_totale < 25:
+        punteggio_totale = min(punteggio_totale, 42)
+        consiglio = f"Poca pioggia in 30g ({precip_totale:.0f} mm) · " + consiglio
+        dettaglio["consiglio"] = consiglio
+
     if punteggio_totale >= 70:
         livello = "🟢 ALTO - condizioni molto buone"
     elif punteggio_totale >= 50:
@@ -1884,7 +1973,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
-        usa_wc=usa_wc,
+        usa_wc=usa_wc, nome_zona=p.get("nome") or "",
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
