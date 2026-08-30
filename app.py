@@ -1068,8 +1068,112 @@ def _info_stazione(s, fonte):
     }
 
 
+def _wc_session():
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 PorciniPredictor",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json,text/javascript,*/*",
+    })
+    try:
+        s.get("https://app.weathercloud.net/", timeout=20)
+    except Exception:
+        pass
+    return s
+
+
+def _wc_id(code):
+    code = str(code).strip()
+    if not code:
+        return ""
+    if code.isdigit():
+        return code
+    try:
+        return str(int(code, 36))
+    except Exception:
+        return code
+
+
+@st.cache_data(ttl=21600)
+def wc_catalogo():
+    """Stazioni WeatherCloud pubbliche nel Centro-Sud (no API key)."""
+    s = _wc_session()
+    try:
+        r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=60)
+        devs = (r.json() or {}).get("devices") or []
+    except Exception:
+        return []
+    out = []
+    for d in devs:
+        if not isinstance(d, (list, tuple)) or len(d) < 4:
+            continue
+        try:
+            lat, lon = float(d[2]), float(d[3])
+        except Exception:
+            continue
+        if not (39.8 <= lat <= 43.2 and 12.2 <= lon <= 16.3):
+            continue
+        code = str(d[0])
+        out.append({
+            "code": code,
+            "id": _wc_id(code),
+            "nome": str(d[1]),
+            "lat": lat,
+            "lon": lon,
+            "online": d[4] == 2 if len(d) > 4 else True,
+        })
+    return out
+
+
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None):
+def wc_mese_pioggia(device_id):
+    """Un mese di mm giornalieri (variabile 801)."""
+    s = _wc_session()
+    did = _wc_id(device_id)
+    try:
+        r = s.post(
+            "https://app.weathercloud.net/device/evolution",
+            data={"device": did, "variable": "801", "period": "month"},
+            timeout=25,
+        )
+        vals = ((r.json() or {}).get("data") or {}).get("values") or {}
+    except Exception:
+        return None
+    records = []
+    for ts, payload in vals.items():
+        try:
+            mm = float((((payload or {}).get("801") or {}).get("stats") or {}).get("total") or 0)
+            dt = datetime.fromtimestamp(int(ts))
+        except Exception:
+            continue
+        records.append({"date": pd.Timestamp(dt.date()), "precip": mm})
+    if not records:
+        return None
+    df = pd.DataFrame(records)
+    df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    return df.sort_values("date")
+
+
+@st.cache_data(ttl=900)
+def wc_oggi(device_id):
+    s = _wc_session()
+    did = _wc_id(device_id)
+    try:
+        r = s.get(
+            "https://app.weathercloud.net/device/values",
+            params={"code": did},
+            timeout=20,
+        )
+        js = r.json()
+        if not isinstance(js, dict) or "rain" not in js and "temp" not in js:
+            return None
+        return js
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -1095,7 +1199,53 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return None
         return round(float(df["precip"].sum(skipna=True)), 1)
 
-    # 1) MeteoNetwork: stazione più vicina. Serie 30g sul punto della centralina
+    # 0) WeatherCloud: mese di pioggia in una chiamata, senza token
+    if usa_wc:
+        cat = wc_catalogo()
+        vicine_wc = mn_stazioni_vicine(lat, lon, cat, quota=quota, n=3, max_km=max_km_stazione)
+        if vicine_wc:
+            s = vicine_wc[0]
+            df_wc = wc_mese_pioggia(s.get("id") or s["code"])
+            oggi = wc_oggi(s.get("id") or s["code"])
+            if df_wc is not None and len(df_wc):
+                if oggi and oggi.get("rain") is not None:
+                    try:
+                        df_wc = df_wc.copy()
+                        oggi_d = pd.Timestamp(datetime.now().date())
+                        mask = df_wc["date"] == oggi_d
+                        if mask.any():
+                            df_wc.loc[mask, "precip"] = float(oggi["rain"])
+                    except Exception:
+                        pass
+                n_pluvio = int(df_wc["precip"].notna().sum())
+                oggi_mm = None
+                if oggi and oggi.get("rain") is not None:
+                    oggi_mm = oggi.get("rain")
+                fonte = (
+                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km"
+                    + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
+                    + f" · {n_pluvio} gg da pluviometro"
+                )
+                info = _info_stazione(s, fonte)
+                info["giorni_pluviometro"] = [
+                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                    for _, rr in df_wc.dropna(subset=["date"]).sort_values("date").iterrows()
+                ]
+                info["pioggia_modello_30g"] = (
+                    round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
+                )
+                info["pioggia_stazione_30g"] = _mm(df_wc)
+                if oggi and oggi.get("wspdhi") is not None:
+                    try:
+                        vento = {
+                            **(vento or {}),
+                            "oggi_kmh": float(oggi.get("wspdhi") or oggi.get("wspd") or 0) * 3.6,
+                        }
+                    except Exception:
+                        pass
+                return df_wc, info, forecast, soil, vento
+
+    # 1) MeteoNetwork (opzionale, senza BULK poco utile)
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
         stazioni = list(stazioni_mn or [])
@@ -1355,11 +1505,12 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None):
+def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
+        usa_wc=usa_wc,
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
@@ -1368,11 +1519,11 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None, serie_mn=None):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         fut = {
-            ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn): p
+            ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn, usa_wc): p
             for p in punti
         }
         for f in as_completed(fut):
@@ -1401,6 +1552,11 @@ st.caption(
 
 with st.sidebar:
     st.header("🌦️ Stazioni pluviometriche")
+    usa_wc = st.checkbox(
+        "Usa WeatherCloud (stazioni vicine, 30 gg senza token)",
+        value=True,
+        help="Rete amatoriale pubblica. Un mese di pioggia in una richiesta, senza BULK.",
+    )
     st.caption(
         "Account gratis su my.meteonetwork.it (non meteonetwork.it). "
         "Poi email/password qui, oppure genera il token una volta e incollalo."
@@ -1572,6 +1728,7 @@ if calcola or "risultati" not in st.session_state:
             mn_codici=mn_codici,
             stazioni_mn=stazioni_mn,
             serie_mn=serie_mn,
+            usa_wc=usa_wc,
         )
         st.session_state["filtro_usato"] = {
             "regioni": regioni_sel,
@@ -1620,6 +1777,22 @@ with col1:
                 else "gray"
             )
             d = r.get("dettaglio", {})
+            meteo = r.get("meteo", {}) or {}
+            tot_staz = meteo.get("pioggia_stazione_30g")
+            giorni_all = meteo.get("giorni_pluviometro") or []
+            giorni_pioggia = []
+            for g in giorni_all:
+                try:
+                    mm = float(str(g).rsplit(":", 1)[-1].replace("mm", "").strip())
+                except Exception:
+                    mm = 0
+                if mm >= 0.2:
+                    giorni_pioggia.append(g)
+            if not giorni_pioggia:
+                giorni_html = "nessun giorno ≥ 0,2 mm nei dati scaricati"
+            else:
+                giorni_html = "<br>".join(giorni_pioggia)
+            tot_txt = f"{tot_staz} mm" if tot_staz is not None else f"{d.get('precip_totale_30g', 'n/d')} mm"
             popup_html = f"""
             <b>{r['nome']}</b><br>
             Regione: {r['regione']}<br>
@@ -1628,11 +1801,11 @@ with col1:
             <b>Punteggio: {r['score']:.0f}/100</b><br>
             {r['livello']}<br>
             {d.get('consiglio', '')}<br>
-            Pioggia 30g: {d.get('precip_totale_30g', 'n/d')} mm<br>
+            <b>Pioggia ultimo mese: {tot_txt}</b><br>
             T max media: {d.get('t_max_media', 'n/d')} °C<br>
-            Fonte: {r.get('meteo', {}).get('fonte', 'n/d')}<br>
-            Stazione: {r.get('meteo', {}).get('stazione', 'n/d')}<br>
-            Giorni pluviometro:<br>{'<br>'.join(r.get('meteo', {}).get('giorni_pluviometro') or ['ancora nessuno'])}
+            Fonte: {meteo.get('fonte', 'n/d')}<br>
+            Stazione: {meteo.get('stazione', 'n/d')}<br>
+            <b>Giorni di pioggia:</b><br>{giorni_html}
             """
             folium.CircleMarker(
                 location=[r["lat"], r["lon"]],
@@ -1641,7 +1814,7 @@ with col1:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.75,
-                popup=folium.Popup(popup_html, max_width=320),
+                popup=folium.Popup(popup_html, max_width=360),
             ).add_to(m)
         st_folium(m, width=700, height=520, returned_objects=[])
     else:
