@@ -1292,6 +1292,12 @@ def mn_catalogo_pubblico():
                 oggi = float(row[20])
         except Exception:
             oggi = None
+        mese = None
+        try:
+            if len(row) > 22 and row[22] not in (None, ""):
+                mese = float(row[22])
+        except Exception:
+            mese = None
         nome = str(row[3] or row[4] or row[0])
         citta = str(row[4] or "")
         if citta and citta.lower() not in nome.lower():
@@ -1302,8 +1308,65 @@ def mn_catalogo_pubblico():
             "lat": lat,
             "lon": lon,
             "oggi_mm": oggi,
+            "mese_mm": mese,
         })
     return out
+
+
+@st.cache_data(ttl=3600)
+def mn_archivio_pubblico(code, mesi=2):
+    """Giorni dalla pagina /archive della stazione. Niente token."""
+    if not code:
+        return None
+    sess = requests.Session()
+    sess.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    try:
+        page = sess.get(
+            f"https://www.meteonetwork.eu/it/weather-station/{code}/archive",
+            timeout=25,
+        )
+        m = re.search(r'csrf-token" content="([^"]+)"', page.text or "")
+        csrf = m.group(1) if m else ""
+    except Exception:
+        return None
+    oggi = datetime.now().date()
+    records = []
+    for back in range(int(mesi)):
+        d0 = (oggi.replace(day=1) - timedelta(days=32 * back)).replace(day=1)
+        try:
+            r = sess.post(
+                "https://www.meteonetwork.eu/it/update-month-riepilogue",
+                headers={
+                    "X-CSRF-TOKEN": csrf,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": f"https://www.meteonetwork.eu/it/weather-station/{code}/archive",
+                },
+                data={"anno": d0.year, "mese": d0.month, "code": code},
+                timeout=25,
+            )
+            js = r.json()
+            rows = js.get("data") if isinstance(js, dict) else None
+        except Exception:
+            rows = None
+        if not rows:
+            continue
+        for row in rows:
+            try:
+                g = int(str(row.get("giorno") or "0"))
+                rain = float(row.get("rain") or 0)
+                dt = datetime(d0.year, d0.month, g)
+            except Exception:
+                continue
+            rec = {"date": pd.Timestamp(dt.date()), "precip": rain}
+            if row.get("tmax") not in (None, ""):
+                try:
+                    rec["t_max"] = float(row["tmax"])
+                except Exception:
+                    pass
+            records.append(rec)
+    if not records:
+        return None
+    return pd.DataFrame(records).drop_duplicates("date").sort_values("date")
 
 
 @st.cache_data(ttl=900)
@@ -1476,8 +1539,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vicine_pub.sort(key=lambda x: x["distanza_km"])
         if vicine_pub:
             s = vicine_pub[0]
-            df_mn = None
-            if mn_token:
+            df_mn = mn_archivio_pubblico(s["code"], 2)
+            if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
             serie = storico_om.copy() if storico_om is not None else None
             if serie is not None:
@@ -1498,14 +1561,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 fonte = (
                     f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
                     + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                    + (f" · {n_gg} gg API" if n_gg else " · lista pubblica stations-list")
+                    + (f" · mese tabella {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+                    + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
                 )
                 info = _info_stazione(s, fonte)
                 info["giorni_pluviometro"] = []
-                if s.get("oggi_mm") is not None:
-                    info["giorni_pluviometro"].append(f"{datetime.now().date()}: {s['oggi_mm']} mm")
+                if df_mn is not None and len(df_mn):
+                    for _, rr in df_mn.dropna(subset=["date"]).sort_values("date").iterrows():
+                        if float(rr.get("precip") or 0) >= 0.2:
+                            info["giorni_pluviometro"].append(
+                                f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                            )
+                    info["pioggia_stazione_30g"] = _mm(df_mn)
+                else:
+                    if s.get("mese_mm") is not None:
+                        info["giorni_pluviometro"].append(f"mese in corso (tabella MN): {s['mese_mm']} mm")
+                    if s.get("oggi_mm") is not None:
+                        info["giorni_pluviometro"].append(f"{datetime.now().date()}: {s['oggi_mm']} mm")
+                    info["pioggia_stazione_30g"] = s.get("mese_mm") if s.get("mese_mm") is not None else _mm(serie)
                 info["pioggia_modello_30g"] = _mm(storico_om)
-                info["pioggia_stazione_30g"] = _mm(serie)
                 if serie is not None:
                     return serie, info, forecast, soil, vento
 
