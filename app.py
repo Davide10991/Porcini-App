@@ -1623,6 +1623,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vicine_pub.sort(key=lambda x: x["distanza_km"])
         if vicine_pub:
             s = vicine_pub[0]
+            prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
+            nome_l = (nome_zona or "").lower()
+            if "mls071" in prefer and (
+                "capracotta" in nome_l
+                or str(s.get("code") or "").lower() in {"mls052", "mls064"}
+            ):
+                s = prefer["mls071"]
             df_mn = mn_archivio_pubblico(s["code"], 2)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
