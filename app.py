@@ -1321,12 +1321,14 @@ def mn_archivio_pubblico(code, mesi=2):
     sess = requests.Session()
     sess.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     try:
-        page = sess.get(
-            f"https://www.meteonetwork.eu/it/weather-station/{code}/archive",
+        scheda = sess.get(
+            f"https://www.meteonetwork.eu/it/weather-station/{code}",
             timeout=25,
         )
+        page = sess.get(scheda.url.rstrip("/") + "/archive", timeout=25)
         m = re.search(r'csrf-token" content="([^"]+)"', page.text or "")
         csrf = m.group(1) if m else ""
+        referer = page.url
     except Exception:
         return None
     oggi = datetime.now().date()
@@ -1339,7 +1341,7 @@ def mn_archivio_pubblico(code, mesi=2):
                 headers={
                     "X-CSRF-TOKEN": csrf,
                     "X-Requested-With": "XMLHttpRequest",
-                    "Referer": f"https://www.meteonetwork.eu/it/weather-station/{code}/archive",
+                    "Referer": referer,
                 },
                 data={"anno": d0.year, "mese": d0.month, "code": code},
                 timeout=25,
