@@ -27,6 +27,84 @@ st.set_page_config(
     layout="wide"
 )
 
+APP_PASSWORD = "Nonlasai1"
+
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap');
+    .stApp {
+        background:
+            linear-gradient(180deg, rgba(18,12,8,.72) 0%, rgba(28,18,10,.62) 40%, rgba(12,18,10,.75) 100%),
+            url('https://images.unsplash.com/photo-1505826759036-4ddee3257e2b?auto=format&fit=crop&w=1920&q=70')
+            center/cover fixed no-repeat;
+    }
+    .stApp::before {
+        content: "🍄";
+        position: fixed; left: 4%; bottom: 6%; font-size: 3.2rem;
+        animation: floaty 6s ease-in-out infinite; opacity: .35; z-index: 0; pointer-events: none;
+    }
+    .stApp::after {
+        content: "🍄";
+        position: fixed; right: 6%; top: 12%; font-size: 2.4rem;
+        animation: floaty 7.5s ease-in-out infinite reverse; opacity: .28; z-index: 0; pointer-events: none;
+    }
+    @keyframes floaty {
+        0%,100% { transform: translateY(0) rotate(-6deg); }
+        50% { transform: translateY(-14px) rotate(8deg); }
+    }
+    h1, h2, h3 { font-family: 'Cormorant Garamond', serif !important; letter-spacing: .02em; }
+    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stSidebar"] {
+        background: rgba(20,14,8,.88) !important;
+        backdrop-filter: blur(10px);
+        border-right: 1px solid rgba(196,154,88,.25);
+    }
+    [data-testid="stSidebar"] * { color: #f3e6d0 !important; }
+    .block-container { position: relative; z-index: 1; }
+    div[data-testid="stMetric"] {
+        background: rgba(255,248,235,.9);
+        border: 1px solid rgba(140,90,40,.25);
+        border-radius: 16px; padding: 8px 12px;
+        animation: fadeup .7s ease both;
+    }
+    @keyframes fadeup { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: none;} }
+    .stButton>button {
+        border-radius: 12px !important;
+        font-weight: 600;
+        transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+    .login-card {
+        max-width: 420px; margin: 12vh auto; padding: 28px 26px;
+        background: rgba(255,248,235,.92); border-radius: 22px;
+        box-shadow: 0 20px 50px rgba(0,0,0,.35);
+        animation: fadeup .6s ease;
+        text-align: center;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+if "app_ok" not in st.session_state:
+    st.session_state["app_ok"] = False
+
+if not st.session_state["app_ok"]:
+    st.markdown(
+        "<div class='login-card'><h1>🍄 Porcini Predictor</h1>"
+        "<p>Accesso riservato. Inserisci la password.</p></div>",
+        unsafe_allow_html=True,
+    )
+    pw = st.text_input("Password", type="password", label_visibility="collapsed", placeholder="Password")
+    if st.button("Entra nel bosco", type="primary", use_container_width=True):
+        if pw == APP_PASSWORD:
+            st.session_state["app_ok"] = True
+            st.rerun()
+        else:
+            st.error("Password errata")
+    st.stop()
+
 # tipo: "faggio" -> 14 giorni | "quercia_castagno" -> 8-9 giorni
 PUNTI = [
     # ===================== ABRUZZO =====================
