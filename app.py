@@ -1925,58 +1925,14 @@ st.caption(
 )
 
 with st.sidebar:
-    st.header("🌦️ Stazioni pluviometriche")
-    usa_wc = st.checkbox(
-        "Usa WeatherCloud (stazioni vicine, 30 gg senza token)",
-        value=True,
-        help="Rete amatoriale pubblica. Un mese di pioggia in una richiesta, senza BULK.",
-    )
+    st.header("🌦️ Stazioni")
     st.caption(
-        "Account gratis su my.meteonetwork.it (non meteonetwork.it). "
-        "Poi email/password qui, oppure genera il token una volta e incollalo."
+        "Pioggia da MeteoNetwork (lista + archivio pubblico), senza login. "
+        "Se non c’è una stazione MN nel raggio, si usa WeatherCloud."
     )
-    mn_email = st.text_input("Username o email myMeteoNetwork", value="")
-    mn_pass = st.text_input("Password myMeteoNetwork", type="password", value="")
-    collega_mn = st.button("Collega MeteoNetwork (una volta sola)")
-    try:
-        _tok_saved = str(st.secrets.get("METEONETWORK_TOKEN", "") or "").strip()
-        _cod_saved = str(st.secrets.get("METEONETWORK_CODICI", "") or st.secrets.get("mn_codici", "") or "").strip()
-    except Exception:
-        _tok_saved, _cod_saved = "", ""
-    mn_token_manuale = st.text_input(
-        "Oppure incolla il token STANDARD",
-        value=_tok_saved,
-        type="password",
-        help="Meglio salvarlo in Manage app → Settings → Secrets, così non lo reinserisci.",
-    )
-    codici_lista = carica_codici_salvati()
-    if _cod_saved:
-        for c in _cod_saved.replace(";", ",").split(","):
-            c = c.strip().lower()
-            if c and c not in codici_lista:
-                codici_lista.append(c)
-        codici_lista = salva_codici_utente(codici_lista)
-    nuovo_codice = st.text_input(
-        "Aggiungi codice stazione MN",
-        value="",
-        placeholder="es. mls071",
-        help="Un codice alla volta, oppure più separati da virgola. Restano salvati.",
-    )
-    if st.button("Salva stazione") and nuovo_codice.strip():
-        for c in nuovo_codice.replace(";", ",").split(","):
-            c = c.strip().lower()
-            if c and c not in codici_lista:
-                codici_lista.append(c)
-        codici_lista = salva_codici_utente(codici_lista)
-        st.rerun()
-    if codici_lista:
-        st.caption("Stazioni salvate: " + ", ".join(codici_lista))
-        if st.button("Cancella stazioni salvate"):
-            salva_codici_utente([])
-            st.rerun()
-    mn_codici = ", ".join(codici_lista)
-    if st.session_state.get("mn_token"):
-        st.caption("Token già in memoria in questa sessione. Non rilogga da solo.")
+    usa_wc = True
+    mn_email, mn_pass, collega_mn = "", "", False
+    mn_token_manuale, mn_codici = "", ""
 
     st.markdown("---")
     st.header("⚙️ Filtri e regole")
