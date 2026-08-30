@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import re
 from datetime import datetime, timedelta
 from math import radians, sin, cos, sqrt, atan2, exp
 import io
@@ -1149,7 +1150,8 @@ def _info_stazione(s, fonte):
 def _wc_session():
     s = requests.Session()
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 PorciniPredictor",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://app.weathercloud.net/map",
         "X-Requested-With": "XMLHttpRequest",
         "Accept": "application/json,text/javascript,*/*",
     })
@@ -1172,15 +1174,31 @@ def _wc_id(code):
         return code
 
 
+def _wc_catalogo_file():
+    path = Path(__file__).resolve().parent / "weathercloud_centro.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 @st.cache_data(ttl=21600)
 def wc_catalogo():
-    """Stazioni WeatherCloud pubbliche nel Centro-Sud (no API key)."""
+    """Stazioni WeatherCloud Centro-Sud. Live + file di riserva."""
+    locale = _wc_catalogo_file()
     s = _wc_session()
     try:
         r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=60)
-        devs = (r.json() or {}).get("devices") or []
+        txt = r.text or ""
+        js = r.json() if txt.lstrip()[:1] == "{" else None
+        devs = (js or {}).get("devices") or []
     except Exception:
-        return []
+        devs = []
+    if not devs:
+        return locale
     out = []
     for d in devs:
         if not isinstance(d, (list, tuple)) or len(d) < 4:
@@ -1200,6 +1218,8 @@ def wc_catalogo():
             "lon": lon,
             "online": d[4] == 2 if len(d) > 4 else True,
         })
+    if len(out) < 50:
+        return locale or out
     return out
 
 
@@ -1230,6 +1250,81 @@ def wc_mese_pioggia(device_id):
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
     return df.sort_values("date")
+
+
+@st.cache_data(ttl=21600)
+def mn_catalogo_pubblico():
+    """Elenco dalla pagina pubblica /it/stations-list. Niente token."""
+    sess = requests.Session()
+    sess.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    try:
+        page = sess.get("https://www.meteonetwork.eu/it/stations-list", timeout=30)
+        m = re.search(r'csrf-token" content="([^"]+)"', page.text or "")
+        csrf = m.group(1) if m else ""
+        r = sess.post(
+            "https://www.meteonetwork.eu/it/get-elenco-stazioni-tabella",
+            headers={
+                "X-CSRF-TOKEN": csrf,
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": "https://www.meteonetwork.eu/it/stations-list",
+                "Accept": "application/json",
+            },
+            timeout=90,
+        )
+        rows = (r.json() or {}).get("stations") or []
+    except Exception:
+        return []
+    out = []
+    for row in rows:
+        if not isinstance(row, (list, tuple)) or len(row) < 7:
+            continue
+        if str(row[5] or "").upper() != "IT":
+            continue
+        try:
+            lat, lon = float(row[1]), float(row[2])
+        except Exception:
+            continue
+        if not (39.5 <= lat <= 43.5 and 12.0 <= lon <= 16.5):
+            continue
+        oggi = None
+        try:
+            if len(row) > 20 and row[20] not in (None, ""):
+                oggi = float(row[20])
+        except Exception:
+            oggi = None
+        nome = str(row[3] or row[4] or row[0])
+        citta = str(row[4] or "")
+        if citta and citta.lower() not in nome.lower():
+            nome = f"{citta} - {nome}"
+        out.append({
+            "code": str(row[0]),
+            "nome": nome,
+            "lat": lat,
+            "lon": lon,
+            "oggi_mm": oggi,
+        })
+    return out
+
+
+@st.cache_data(ttl=900)
+def mn_interpolato(token, lat, lon):
+    """Griglia MN 2.5 km (stesso dato delle mappe realtime). Serve token STANDARD."""
+    if not token:
+        return None
+    try:
+        r = requests.get(
+            "https://api.meteonetwork.it/v3/interpolated-realtime",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "PorciniPredictor/1.0"},
+            params={"lat": lat, "lon": lon},
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return None
+        js = r.json()
+        row = js[0] if isinstance(js, list) and js else js
+        return row if isinstance(row, dict) else None
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=900)
@@ -1277,10 +1372,17 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return None
         return round(float(df["precip"].sum(skipna=True)), 1)
 
-    # 0) WeatherCloud: mese di pioggia in una chiamata, senza token
-    if usa_wc:
+    # 0) WeatherCloud solo se NON c'è una MeteoNetwork nel raggio
+    cat_mn_pre = mn_catalogo_pubblico()
+    ha_mn_vicina = False
+    if cat_mn_pre:
+        ha_mn_vicina = any(
+            distanza_km(lat, lon, s["lat"], s["lon"]) <= float(max_km_stazione)
+            for s in cat_mn_pre
+        )
+    if usa_wc and not ha_mn_vicina:
         cat = wc_catalogo()
-        raggio_vicino = min(8.0, float(max_km_stazione))
+        raggio_vicino = 5.0
         tutte_dist = []
         for staz in cat:
             dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
@@ -1290,7 +1392,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 tutte_dist.append(s2)
         tutte_dist.sort(key=lambda x: x["distanza_km"])
         vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino][:8]
-        pool = vicine_vicine if vicine_vicine else tutte_dist[:8]
+        # Oltre 5 km non si usa WeatherCloud: si passa a MeteoNetwork / modello
+        pool = vicine_vicine
         if pool:
             migliore = None
             df_wc = None
@@ -1354,8 +1457,59 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     except Exception:
                         pass
                 return df_out, info, forecast, soil, vento
+            # stazione WC c'è ma il mese non è arrivato: uso comunque quella più vicina + modello
+            if storico_om is not None:
+                fonte = f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km · mm mese non letti, uso modello sul punto stazione"
+                info = _info_stazione(s, fonte)
+                return storico_om, info, forecast, soil, vento
 
-    # 1) MeteoNetwork (opzionale, senza BULK poco utile)
+    # 1) MeteoNetwork da lista pubblica (stessa pagina /it/stations-list)
+    cat_mn = mn_catalogo_pubblico()
+    if cat_mn:
+        vicine_pub = []
+        for staz in cat_mn:
+            dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
+            if dkm <= float(max_km_stazione):
+                s2 = dict(staz)
+                s2["distanza_km"] = round(dkm, 1)
+                vicine_pub.append(s2)
+        vicine_pub.sort(key=lambda x: x["distanza_km"])
+        if vicine_pub:
+            s = vicine_pub[0]
+            df_mn = None
+            if mn_token:
+                df_mn = mn_dati_stazione(mn_token, s["code"], days)
+            serie = storico_om.copy() if storico_om is not None else None
+            if serie is not None:
+                serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
+                if df_mn is not None and len(df_mn):
+                    for _, row in df_mn.iterrows():
+                        mask = serie["date"] == pd.to_datetime(row["date"]).normalize()
+                        if mask.any() and not pd.isna(row.get("precip")):
+                            serie.loc[mask, "precip"] = row["precip"]
+                elif s.get("oggi_mm") is not None:
+                    oggi_d = pd.Timestamp(datetime.now().date())
+                    mask = serie["date"] == oggi_d
+                    if mask.any():
+                        serie.loc[mask, "precip"] = s["oggi_mm"]
+                n_gg = 0
+                if df_mn is not None and len(df_mn):
+                    n_gg = int(df_mn["precip"].notna().sum())
+                fonte = (
+                    f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                    + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
+                    + (f" · {n_gg} gg API" if n_gg else " · lista pubblica stations-list")
+                )
+                info = _info_stazione(s, fonte)
+                info["giorni_pluviometro"] = []
+                if s.get("oggi_mm") is not None:
+                    info["giorni_pluviometro"].append(f"{datetime.now().date()}: {s['oggi_mm']} mm")
+                info["pioggia_modello_30g"] = _mm(storico_om)
+                info["pioggia_stazione_30g"] = _mm(serie)
+                if serie is not None:
+                    return serie, info, forecast, soil, vento
+
+    # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
     if mn_token:
         stazioni = list(stazioni_mn or [])
@@ -1406,6 +1560,35 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 )
                 info["pioggia_stazione_30g"] = _mm(serie)
                 return serie, info, forecast, soil, vento
+
+    # 1b) MeteoNetwork interpolato 2.5 km (mappe realtime) se WC è oltre 5 km
+    if mn_token and storico_om is not None:
+        inter = mn_interpolato(mn_token, lat, lon)
+        if inter:
+            serie = storico_om.copy()
+            rain = inter.get("daily_rain") or inter.get("rain")
+            try:
+                if rain not in (None, ""):
+                    oggi_d = pd.Timestamp(datetime.now().date())
+                    serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
+                    mask = serie["date"] == oggi_d
+                    if mask.any():
+                        serie.loc[mask, "precip"] = float(rain)
+            except Exception:
+                pass
+            fonte_mn = "MeteoNetwork interpolato 2,5 km (mappe realtime)"
+            if rain not in (None, ""):
+                fonte_mn += f" · oggi {rain} mm"
+            info = {
+                "fonte": fonte_mn,
+                "stazione": "griglia MN sul bosco",
+                "distanza_km": 0,
+                "quota_stazione": None,
+                "pioggia_modello_30g": _mm(storico_om),
+                "pioggia_stazione_30g": _mm(serie),
+                "giorni_pluviometro": [f"{datetime.now().date()}: {rain} mm"] if rain not in (None, "") else [],
+            }
+            return serie, info, forecast, soil, vento
 
     # 2) ufficiale SOLO se è vicina al bosco (altrimenti i mm non c'entrano)
     limite_ufficiale = min(18, max_km_stazione)
