@@ -1818,7 +1818,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         t_max_media = float(pd.to_numeric(df["t_max"], errors="coerce").mean())
         if pd.isna(t_max_media):
             t_max_media = 20.0
-    t_min_media = float(df["t_min"].mean())
+    if "t_min" not in df.columns:
+        t_min_media = 12.0
+    else:
+        t_min_media = float(pd.to_numeric(df["t_min"], errors="coerce").mean())
+        if pd.isna(t_min_media):
+            t_min_media = 12.0
 
     # ultimi 10 giorni pesano di più del mese intero
     coda = df.tail(10)
