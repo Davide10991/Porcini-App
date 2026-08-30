@@ -1208,33 +1208,44 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             df_wc = wc_mese_pioggia(s.get("id") or s["code"])
             oggi = wc_oggi(s.get("id") or s["code"])
             if df_wc is not None and len(df_wc):
+                df_mm = df_wc.copy()
+                df_mm["date"] = pd.to_datetime(df_mm["date"]).dt.normalize()
                 if oggi and oggi.get("rain") is not None:
                     try:
-                        df_wc = df_wc.copy()
                         oggi_d = pd.Timestamp(datetime.now().date())
-                        mask = df_wc["date"] == oggi_d
+                        mask = df_mm["date"] == oggi_d
                         if mask.any():
-                            df_wc.loc[mask, "precip"] = float(oggi["rain"])
+                            df_mm.loc[mask, "precip"] = float(oggi["rain"])
                     except Exception:
                         pass
-                n_pluvio = int(df_wc["precip"].notna().sum())
-                oggi_mm = None
-                if oggi and oggi.get("rain") is not None:
-                    oggi_mm = oggi.get("rain")
+                giorni_txt = [
+                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                    for _, rr in df_mm.dropna(subset=["date"]).sort_values("date").iterrows()
+                    if float(rr["precip"]) >= 0.2
+                ]
+                n_pluvio = int(df_mm["precip"].notna().sum())
+                if storico_om is not None:
+                    serie = storico_om.copy()
+                    serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
+                    for _, row in df_mm.iterrows():
+                        mask = serie["date"] == row["date"]
+                        if mask.any():
+                            serie.loc[mask, "precip"] = row["precip"]
+                    df_out = serie
+                else:
+                    df_out = df_mm
+                oggi_mm = oggi.get("rain") if oggi else None
                 fonte = (
                     f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km"
                     + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
                     + f" · {n_pluvio} gg da pluviometro"
                 )
                 info = _info_stazione(s, fonte)
-                info["giorni_pluviometro"] = [
-                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                    for _, rr in df_wc.dropna(subset=["date"]).sort_values("date").iterrows()
-                ]
+                info["giorni_pluviometro"] = giorni_txt
                 info["pioggia_modello_30g"] = (
                     round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
                 )
-                info["pioggia_stazione_30g"] = _mm(df_wc)
+                info["pioggia_stazione_30g"] = _mm(df_mm)
                 if oggi and oggi.get("wspdhi") is not None:
                     try:
                         vento = {
@@ -1243,7 +1254,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                         }
                     except Exception:
                         pass
-                return df_wc, info, forecast, soil, vento
+                return df_out, info, forecast, soil, vento
 
     # 1) MeteoNetwork (opzionale, senza BULK poco utile)
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
@@ -1360,7 +1371,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     precip_totale = float(df["precip"].sum())
     giorni_con_pioggia = int((df["precip"] > 1).sum())
-    t_max_media = float(df["t_max"].mean())
+    if df is None or "t_max" not in df.columns:
+        t_max_media = 20.0
+    else:
+        t_max_media = float(pd.to_numeric(df["t_max"], errors="coerce").mean())
+        if pd.isna(t_max_media):
+            t_max_media = 20.0
     t_min_media = float(df["t_min"].mean())
 
     # ultimi 10 giorni pesano di più del mese intero
