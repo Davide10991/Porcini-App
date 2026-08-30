@@ -1202,11 +1202,21 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # 0) WeatherCloud: mese di pioggia in una chiamata, senza token
     if usa_wc:
         cat = wc_catalogo()
-        vicine_wc = mn_stazioni_vicine(lat, lon, cat, quota=quota, n=8, max_km=max_km_stazione)
-        if vicine_wc:
+        raggio_vicino = min(8.0, float(max_km_stazione))
+        tutte_dist = []
+        for staz in cat:
+            dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
+            if dkm <= float(max_km_stazione):
+                s2 = dict(staz)
+                s2["distanza_km"] = round(dkm, 1)
+                tutte_dist.append(s2)
+        tutte_dist.sort(key=lambda x: x["distanza_km"])
+        vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino][:8]
+        pool = vicine_vicine if vicine_vicine else tutte_dist[:8]
+        if pool:
             migliore = None
             df_wc = None
-            for cand in vicine_wc:
+            for cand in pool:
                 df_c = wc_mese_pioggia(cand.get("id") or cand["code"])
                 mm_c = 0.0
                 if df_c is not None and len(df_c) and "precip" in df_c.columns:
@@ -1215,7 +1225,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 rank = (mm_c, -dist)
                 if migliore is None or rank > migliore[0]:
                     migliore = (rank, cand, df_c, mm_c)
-            s = migliore[1] if migliore else vicine_wc[0]
+            s = migliore[1] if migliore else pool[0]
             df_wc = migliore[2] if migliore else None
             oggi = wc_oggi(s.get("id") or s["code"])
             if df_wc is not None and len(df_wc):
@@ -1247,7 +1257,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     df_out = df_mm
                 oggi_mm = oggi.get("rain") if oggi else None
                 fonte = (
-                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km (più umida nel raggio)"
+                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km"
                     + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
                     + f" · {n_pluvio} gg da pluviometro"
                 )
