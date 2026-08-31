@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Nonlasai1"
+APP_PASSWORD = "Davide1099"
 
 st.markdown(
     """
