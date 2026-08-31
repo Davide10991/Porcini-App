@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Davide1099"
+APP_PASSWORD = "Nonlasai1"
 
 st.markdown(
     """
@@ -2381,3 +2381,4 @@ st.caption(
     "Fonte: MeteoNetwork (se collegato), stazioni ufficiali Meteostat, riserva Open-Meteo "
     "(pioggia, temperature, previsione 7 giorni, umidità del suolo). "
     "Rispetta i regolamenti regionali su tesserini, quantitativi e specie protette."
+)
