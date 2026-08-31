@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Davide1099"
+APP_PASSWORD = "Nonlasai1"
 
 st.markdown(
     """
@@ -367,6 +367,18 @@ PUNTI = [
     {"nome": "Valle Agricola", "lat": 41.425, "lon": 14.255, "tipo": "faggio", "quota": 700, "regione": "Campania"},
     {"nome": "Gallo Matese - lago", "lat": 41.466, "lon": 14.225, "tipo": "faggio", "quota": 900, "regione": "Campania"},
     {"nome": "Letino - lago", "lat": 41.453, "lon": 14.255, "tipo": "faggio", "quota": 1000, "regione": "Campania"},
+    {"nome": "Roccamonfina - cratere", "lat": 41.295, "lon": 13.982, "tipo": "quercia_castagno", "quota": 850, "regione": "Campania"},
+    {"nome": "Roccamonfina - Monte Santa Croce", "lat": 41.305, "lon": 13.968, "tipo": "quercia_castagno", "quota": 1000, "regione": "Campania"},
+    {"nome": "Roccamonfina - castagneti", "lat": 41.288, "lon": 13.995, "tipo": "quercia_castagno", "quota": 650, "regione": "Campania"},
+    {"nome": "Conca della Campania", "lat": 41.332, "lon": 13.991, "tipo": "quercia_castagno", "quota": 520, "regione": "Campania"},
+    {"nome": "Galluccio - Roccamonfina", "lat": 41.352, "lon": 13.954, "tipo": "quercia_castagno", "quota": 550, "regione": "Campania"},
+    {"nome": "Tora e Piccilli", "lat": 41.337, "lon": 14.025, "tipo": "quercia_castagno", "quota": 500, "regione": "Campania"},
+    {"nome": "Marzano Appio", "lat": 41.318, "lon": 14.045, "tipo": "quercia_castagno", "quota": 480, "regione": "Campania"},
+    {"nome": "Teano - colline boschive", "lat": 41.251, "lon": 14.067, "tipo": "quercia_castagno", "quota": 280, "regione": "Campania"},
+    {"nome": "Sessa Aurunca - versante Roccamonfina", "lat": 41.255, "lon": 13.955, "tipo": "quercia_castagno", "quota": 400, "regione": "Campania"},
+    {"nome": "Mignano Monte Lungo", "lat": 41.405, "lon": 13.985, "tipo": "quercia_castagno", "quota": 180, "regione": "Campania"},
+    {"nome": "Presenzano", "lat": 41.374, "lon": 14.088, "tipo": "quercia_castagno", "quota": 220, "regione": "Campania"},
+    {"nome": "San Pietro Infine", "lat": 41.447, "lon": 13.960, "tipo": "quercia_castagno", "quota": 180, "regione": "Campania"},
     {"nome": "Pietraroja", "lat": 41.347, "lon": 14.550, "tipo": "faggio", "quota": 900, "regione": "Campania"},
     {"nome": "Castello del Matese", "lat": 41.368, "lon": 14.378, "tipo": "faggio", "quota": 800, "regione": "Campania"},
     {"nome": "Taburno - Camposauro", "lat": 41.100, "lon": 14.600, "tipo": "quercia_castagno", "quota": 900, "regione": "Campania"},
@@ -2060,7 +2072,7 @@ with st.sidebar:
         ["faggio", "quercia_castagno"],
         default=["faggio", "quercia_castagno"],
     )
-    quota_range = st.slider("Quota (m)", 400, 1800, (500, 1700), step=50)
+    quota_range = st.slider("Quota (m)", 100, 1800, (150, 1700), step=50)
     cerca = st.text_input("Cerca zona (nome)", value="")
 
     st.markdown("---")
