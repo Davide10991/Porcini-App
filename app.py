@@ -1414,30 +1414,65 @@ def wc_catalogo():
 
 
 @st.cache_data(ttl=3600)
-def wc_mese_pioggia(device_id):
-    """Un mese di mm giornalieri (variabile 801)."""
+def _wc_evolution(device_id, variable):
     s = _wc_session()
     did = _wc_id(device_id)
     try:
         r = s.post(
             "https://app.weathercloud.net/device/evolution",
-            data={"device": did, "variable": "801", "period": "month"},
+            data={"device": did, "variable": str(variable), "period": "month"},
             timeout=25,
         )
-        vals = ((r.json() or {}).get("data") or {}).get("values") or {}
+        return ((r.json() or {}).get("data") or {}).get("values") or {}
     except Exception:
-        return None
-    records = []
-    for ts, payload in vals.items():
+        return {}
+
+
+@st.cache_data(ttl=3600)
+def wc_mese_pioggia(device_id):
+    """Mese WC: mm (801) + T (101) + vento raffica (541/521, m/s → km/h)."""
+    vals_r = _wc_evolution(device_id, "801")
+    vals_t = _wc_evolution(device_id, "101")
+    vals_v = _wc_evolution(device_id, "541")
+    by_day = {}
+    for ts, payload in (vals_r or {}).items():
         try:
-            mm = float((((payload or {}).get("801") or {}).get("stats") or {}).get("total") or 0)
-            dt = datetime.fromtimestamp(int(ts))
+            dt = datetime.fromtimestamp(int(ts)).date()
+            stats = ((payload or {}).get("801") or {}).get("stats") or {}
+            mm = stats.get("total")
+            if mm is None:
+                mm = stats.get("sum") or 0
+            by_day[dt] = {"date": pd.Timestamp(dt), "precip": float(mm or 0)}
         except Exception:
             continue
-        records.append({"date": pd.Timestamp(dt.date()), "precip": mm})
-    if not records:
+    for ts, payload in (vals_t or {}).items():
+        try:
+            dt = datetime.fromtimestamp(int(ts)).date()
+            stats = ((payload or {}).get("101") or {}).get("stats") or {}
+            rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
+            if stats.get("max") is not None:
+                rec["t_max"] = float(stats["max"])
+            if stats.get("min") is not None:
+                rec["t_min"] = float(stats["min"])
+            if stats.get("sum") is not None and stats.get("samples"):
+                rec["t_med"] = round(float(stats["sum"]) / float(stats["samples"]), 1)
+        except Exception:
+            continue
+    for ts, payload in (vals_v or {}).items():
+        try:
+            dt = datetime.fromtimestamp(int(ts)).date()
+            rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
+            payload = payload or {}
+            raffica = ((payload.get("521") or {}).get("stats") or {}).get("max")
+            medio = ((payload.get("541") or {}).get("stats") or {}).get("max")
+            ms = raffica if raffica is not None else medio
+            if ms is not None:
+                rec["vento_max"] = round(float(ms) * 3.6, 1)
+        except Exception:
+            continue
+    if not by_day:
         return None
-    df = pd.DataFrame(records)
+    df = pd.DataFrame(list(by_day.values()))
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
     return df.sort_values("date")
 
@@ -1955,6 +1990,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
                 )
                 info["pioggia_stazione_30g"] = _mm(df_mm)
+                if "vento_max" in df_out.columns:
+                    vento = riepilogo_vento(df_out)
                 if oggi and oggi.get("wspdhi") is not None:
                     try:
                         vento = {
