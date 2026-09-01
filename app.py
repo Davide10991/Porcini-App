@@ -811,9 +811,22 @@ def _carica_giorni_file():
 
 
 def _salva_giorni_file():
+    """Tengo gli ultimi 40 giorni: quando MN azzera il mese nuovo non perdiamo i 30 precedenti."""
     try:
+        store = dict(st.session_state.get("mn_giorni") or {})
+        limite = (datetime.now().date() - timedelta(days=40)).isoformat()
+        pulito = {}
+        for k, v in store.items():
+            d = ""
+            if isinstance(v, dict):
+                d = str(v.get("date") or "")
+            if not d and "|" in str(k):
+                d = str(k).split("|", 1)[-1]
+            if d >= limite:
+                pulito[k] = v
+        st.session_state["mn_giorni"] = pulito
         _path_giorni_salvati().write_text(
-            json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False),
+            json.dumps(pulito, ensure_ascii=False),
             encoding="utf-8",
         )
     except Exception:
@@ -1620,10 +1633,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     soil = None
     vento = riepilogo_vento(None)
 
-    try:
-        storico_om, forecast, soil, vento = get_openmeteo_bundle(lat, lon, days)
-    except Exception:
-        storico_om, forecast, soil, vento = None, None, None, riepilogo_vento(None)
+    # niente Open-Meteo in calcolo: rallentava ogni zona e i mm/°C arrivano dalle stazioni
+    storico_om, forecast, soil = None, None, None
 
     if storico_om is not None and "precip" in storico_om.columns:
         info["pioggia_modello_30g"] = round(float(storico_om["precip"].sum(skipna=True)), 1)
@@ -2165,7 +2176,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=4, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         fut = {
@@ -2228,6 +2239,15 @@ with st.sidebar:
         "Distanza max stazione (km)",
         10, 60, 35, 5,
         help="Oltre questa distanza si usa il modello ICON-2I sul punto del bosco, non un aeroporto lontano.",
+    )
+    _carica_giorni_file()
+    giorni_json = json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False)
+    st.download_button(
+        "Scarica piogge salvate (30-40 gg)",
+        data=giorni_json,
+        file_name="mn_giorni_utente.json",
+        mime="application/json",
+        help="Dopo Calcola scarica questo file e sostituiscilo su GitHub. Su Cloud il disco si cancella al reboot.",
     )
 
     st.markdown("---")
@@ -2332,6 +2352,7 @@ if calcola or "risultati" not in st.session_state:
             serie_mn=serie_mn,
             usa_wc=usa_wc,
         )
+        _salva_giorni_file()
         st.session_state["filtro_usato"] = {
             "regioni": regioni_sel,
             "tipi": tipi_sel,
