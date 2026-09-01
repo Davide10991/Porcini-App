@@ -2111,18 +2111,17 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     precip_totale = float(df["precip"].sum())
     giorni_con_pioggia = int((df["precip"] > 1).sum())
-    if df is None or "t_max" not in df.columns:
-        t_max_media = 20.0
-    else:
-        t_max_media = float(pd.to_numeric(df["t_max"], errors="coerce").mean())
-        if pd.isna(t_max_media):
-            t_max_media = 20.0
-    if "t_min" not in df.columns:
-        t_min_media = 12.0
-    else:
-        t_min_media = float(pd.to_numeric(df["t_min"], errors="coerce").mean())
-        if pd.isna(t_min_media):
-            t_min_media = 12.0
+    def _media(col, fallback):
+        if df is None or col not in df.columns:
+            return fallback, None
+        v = float(pd.to_numeric(df[col], errors="coerce").mean())
+        if pd.isna(v):
+            return fallback, None
+        return v, round(v, 1)
+
+    t_max_media, t_max_view = _media("t_max", 20.0)
+    t_min_media, t_min_view = _media("t_min", 12.0)
+    _, t_med_view = _media("t_med", None)
 
     # ultimi 10 giorni pesano di più del mese intero
     coda = df.tail(10)
@@ -2228,8 +2227,9 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "precip_totale_30g": round(precip_totale, 1),
         "precip_10g": round(precip_10g, 1),
         "giorni_con_pioggia": giorni_con_pioggia,
-        "t_max_media": round(t_max_media, 1),
-        "t_min_media": round(t_min_media, 1),
+        "t_max_media": t_max_view if t_max_view is not None else "n/d",
+        "t_min_media": t_min_view if t_min_view is not None else "n/d",
+        "t_med_media": t_med_view if t_med_view is not None else "n/d",
         "giorni_dalla_buona_pioggia": giorni_dalla_pioggia if giorni_dalla_pioggia < 99 else "n/d",
         "giorni_attesa_consigliati": giorni_attesa,
         "umidita_suolo": soil if soil is not None else "n/d",
@@ -2542,7 +2542,7 @@ with col1:
             {r['livello']}<br>
             {d.get('consiglio', '')}<br>
             <b>Pioggia ultimo mese: {tot_txt}</b><br>
-            T max media: {d.get('t_max_media', 'n/d')} °C<br>
+            T max: {d.get('t_max_media', 'n/d')} °C · T med: {d.get('t_med_media', 'n/d')} °C · T min: {d.get('t_min_media', 'n/d')} °C<br>
             Vento 10gg: max {d.get('vento_max_10g', 'n/d')} km/h · {d.get('nota_vento', '')}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
             Stazione: {meteo.get('stazione', 'n/d')}<br>
