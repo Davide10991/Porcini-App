@@ -1285,11 +1285,23 @@ def wc_mese_pioggia(device_id):
     return df.sort_values("date")
 
 
-@st.cache_data(ttl=21600)
+def _mn_catalogo_file():
+    p = Path(__file__).resolve().parent / "mn_centro.json"
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=3600)
 def mn_catalogo_pubblico():
     """Elenco dalla pagina pubblica /it/stations-list. Niente token."""
     sess = requests.Session()
     sess.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    rows = []
     try:
         page = sess.get("https://www.meteonetwork.eu/it/stations-list", timeout=30)
         m = re.search(r'csrf-token" content="([^"]+)"', page.text or "")
@@ -1306,7 +1318,9 @@ def mn_catalogo_pubblico():
         )
         rows = (r.json() or {}).get("stations") or []
     except Exception:
-        return []
+        rows = []
+    if not rows:
+        return _mn_catalogo_file()
     out = []
     for row in rows:
         if not isinstance(row, (list, tuple)) or len(row) < 7:
