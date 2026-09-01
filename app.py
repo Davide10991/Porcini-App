@@ -1530,7 +1530,7 @@ def mn_archivio_pubblico(code, mesi=2):
     # reintegro giorni salvati degli ultimi 40 gg anche se MN non li manda più
     oggi = datetime.now().date()
     have = {pd.to_datetime(r["date"]).date().isoformat() for r in records}
-    for i in range(40):
+    for i in range(30):
         d = (oggi - timedelta(days=i)).isoformat()
         key = f"{code}|{d}"
         if d in have or key not in store:
@@ -1767,7 +1767,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 or str(s.get("code") or "").lower() in {"mls052", "mls064"}
             ):
                 s = prefer["mls071"]
-            df_mn = mn_archivio_pubblico(s["code"], 3)
+            df_mn = mn_archivio_pubblico(s["code"], 2)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
             serie = None
@@ -1776,7 +1776,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 df_mn["date"] = pd.to_datetime(df_mn["date"]).dt.normalize()
                 taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
                 df_mn30 = df_mn[df_mn["date"] >= taglio].copy()
-                serie = df_mn30 if len(df_mn30) else df_mn
+                serie = df_mn30
                 if s.get("oggi_mm") is not None:
                     oggi_d = pd.Timestamp(datetime.now().date())
                     if (serie["date"] == oggi_d).any():
