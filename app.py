@@ -1090,6 +1090,104 @@ def riepilogo_vento(df, giorni=10):
     }
 
 
+def _dir_cardinale(gradi):
+    try:
+        g = float(gradi) % 360
+    except Exception:
+        return None
+    nomi = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
+    return nomi[int((g + 22.5) // 45) % 8]
+
+
+@st.cache_data(ttl=3600)
+def get_vento_direzione_om(lat, lon):
+    """Direzione prevalente 10 gg. L'archivio MN mensile non ha i gradi."""
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": round(float(lat), 3),
+                "longitude": round(float(lon), 3),
+                "past_days": 10,
+                "forecast_days": 1,
+                "daily": "wind_direction_10m_dominant",
+                "timezone": "Europe/Rome",
+            },
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        vals = (r.json().get("daily") or {}).get("wind_direction_10m_dominant") or []
+        nums = [float(x) for x in vals if x is not None]
+        if not nums:
+            return None
+        import math
+        rad = [math.radians(x) for x in nums]
+        x = sum(math.sin(a) for a in rad) / len(rad)
+        y = sum(math.cos(a) for a in rad) / len(rad)
+        ang = (math.degrees(math.atan2(x, y)) + 360) % 360
+        return _dir_cardinale(ang)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
+def get_temperature_om(lat, lon, days=30):
+    """Solo temperature, non la pioggia."""
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": round(float(lat), 3),
+                "longitude": round(float(lon), 3),
+                "past_days": min(int(days), 92),
+                "forecast_days": 1,
+                "daily": "temperature_2m_max,temperature_2m_min",
+                "timezone": "Europe/Rome",
+            },
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        d = r.json().get("daily") or {}
+        if not d.get("time"):
+            return None
+        return pd.DataFrame({
+            "date": pd.to_datetime(d["time"]).normalize(),
+            "t_max": d.get("temperature_2m_max"),
+            "t_min": d.get("temperature_2m_min"),
+        })
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600)
+def get_umidita_media(lat, lon):
+    """Umidità relativa media 10 giorni (Open-Meteo). MN pubblico spesso non la manda."""
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": round(float(lat), 3),
+                "longitude": round(float(lon), 3),
+                "past_days": 10,
+                "forecast_days": 1,
+                "daily": "relative_humidity_2m_mean",
+                "timezone": "Europe/Rome",
+            },
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        vals = (r.json().get("daily") or {}).get("relative_humidity_2m_mean") or []
+        nums = [float(x) for x in vals if x is not None]
+        if not nums:
+            return None
+        return round(sum(nums) / len(nums), 1)
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=3600)
 def get_openmeteo_bundle(lat, lon, days=30):
     """Storico + previsione + suolo. Pioggia da ICON-2I (2 km) se disponibile."""
@@ -1536,11 +1634,12 @@ def mn_archivio_pubblico(code, mesi=2):
             except Exception:
                 continue
             rec = {"date": pd.Timestamp(dt.date()), "precip": rain}
-            if row.get("tmax") not in (None, ""):
-                try:
-                    rec["t_max"] = float(row["tmax"])
-                except Exception:
-                    pass
+            for src, dst in (("tmax", "t_max"), ("tmin", "t_min"), ("tmed", "t_med"), ("wmax", "vento_max")):
+                if row.get(src) not in (None, ""):
+                    try:
+                        rec[dst] = float(str(row[src]).replace(",", "."))
+                    except Exception:
+                        pass
             records.append(rec)
     store = _carica_giorni_file()
     for rec in records:
@@ -1548,17 +1647,23 @@ def mn_archivio_pubblico(code, mesi=2):
         key = f"{code}|{d}"
         rain = float(rec.get("precip") or 0)
         old = store.get(key) or {}
+        if not isinstance(old, dict):
+            old = {"precip": old, "date": d}
         old_rain = None
         try:
-            old_rain = float(old.get("precip") if isinstance(old, dict) else old)
+            old_rain = float(old.get("precip") or 0)
         except Exception:
             old_rain = None
-        # se MN azzera il mese, tengo il valore già salvato
         if old_rain is not None and rain <= 0 and old_rain > 0:
             rec["precip"] = old_rain
-        elif rain > 0 or key not in store:
-            store[key] = {"precip": rain, "date": d}
-    # reintegro giorni salvati degli ultimi 40 gg anche se MN non li manda più
+        packed = {"precip": float(rec.get("precip") or 0), "date": d}
+        for k in ("t_max", "t_min", "t_med", "vento_max"):
+            if rec.get(k) is not None:
+                packed[k] = rec[k]
+            elif old.get(k) is not None:
+                packed[k] = old[k]
+                rec[k] = old[k]
+        store[key] = packed
     oggi = datetime.now().date()
     have = {pd.to_datetime(r["date"]).date().isoformat() for r in records}
     for i in range(30):
@@ -1567,10 +1672,15 @@ def mn_archivio_pubblico(code, mesi=2):
         if d in have or key not in store:
             continue
         try:
-            records.append({
+            old = store[key] or {}
+            rec = {
                 "date": pd.Timestamp(d),
-                "precip": float((store[key] or {}).get("precip") or 0),
-            })
+                "precip": float(old.get("precip") or 0),
+            }
+            for k in ("t_max", "t_min", "t_med", "vento_max"):
+                if old.get(k) is not None:
+                    rec[k] = float(old[k])
+            records.append(rec)
         except Exception:
             pass
     st.session_state["mn_giorni"] = store
@@ -2072,25 +2182,10 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     if tipo_bosco == "faggio":
         giorni_attesa = 14
-        attesa_min = 8
     elif tipo_bosco == "castagno":
         giorni_attesa = 10
-        attesa_min = 6
     else:
         giorni_attesa = 8
-        attesa_min = 5
-    # più caldo → micelio più veloce, attesa più corta
-    if t_max_media >= 30:
-        giorni_attesa -= 5
-    elif t_max_media >= 27:
-        giorni_attesa -= 4
-    elif t_max_media >= 24:
-        giorni_attesa -= 2
-    elif t_max_media >= 21:
-        giorni_attesa -= 1
-    elif 0 < t_max_media < 16:
-        giorni_attesa += 2
-    giorni_attesa = max(attesa_min, min(18, int(giorni_attesa)))
 
     giorni_dalla_pioggia = 99
     cum = 0
@@ -2123,6 +2218,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     # il vento persistente brucia l'effetto della pioggia e del suolo (decadimento esponenziale)
     umido = (score_pioggia + score_tempo + score_suolo) * fattore_v
+    bonus_ur = 0
     punteggio_totale = min(100, umido + score_temp * (0.45 + 0.55 * fattore_v))
     consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
     if fattore_v < 0.5:
@@ -2189,10 +2285,31 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
         usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
     )
+    manca_t = df is None or "t_max" not in df.columns or pd.to_numeric(df.get("t_max"), errors="coerce").isna().all()
+    if manca_t:
+        dt = get_temperature_om(p["lat"], p["lon"], 30)
+        if dt is not None and df is not None and len(df):
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+            df = df.merge(dt, on="date", how="left", suffixes=("", "_om"))
+            if "t_max_om" in df.columns:
+                if "t_max" not in df.columns:
+                    df["t_max"] = df["t_max_om"]
+                else:
+                    df["t_max"] = pd.to_numeric(df["t_max"], errors="coerce").fillna(df["t_max_om"])
+            if "t_min_om" in df.columns:
+                if "t_min" not in df.columns:
+                    df["t_min"] = df["t_min_om"]
+                else:
+                    df["t_min"] = pd.to_numeric(df.get("t_min"), errors="coerce").fillna(df["t_min_om"])
+        elif dt is not None and df is None:
+            df = dt.copy()
+            df["precip"] = 0.0
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
         soil=soil, forecast=forecast, vento=vento,
     )
+    det["vento_dir"] = get_vento_direzione_om(p["lat"], p["lon"]) or "n/d"
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
@@ -2447,6 +2564,7 @@ with col1:
             {d.get('consiglio', '')}<br>
             <b>Pioggia ultimo mese: {tot_txt}</b><br>
             T max media: {d.get('t_max_media', 'n/d')} °C<br>
+            Vento 10gg: max {d.get('vento_max_10g', 'n/d')} km/h da {d.get('vento_dir', 'n/d')} · {d.get('nota_vento', '')}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
