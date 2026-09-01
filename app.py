@@ -1857,14 +1857,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df_cf is not None and len(df_cf):
             return df_cf, info, forecast, soil, vento
 
-    # 0) WeatherCloud solo se NON c'è una MeteoNetwork nel raggio
+    # WeatherCloud se la MN più vicina è troppo lontana dal bosco (>8 km in linea d'aria)
+    RAGGIO_MN_BUONO = 5.0
     cat_mn_pre = mn_catalogo_pubblico()
-    ha_mn_vicina = False
+    mn_min = 999.0
     if cat_mn_pre:
-        ha_mn_vicina = any(
-            distanza_km(lat, lon, s["lat"], s["lon"]) <= float(max_km_stazione)
-            for s in cat_mn_pre
-        )
+        for s in cat_mn_pre:
+            mn_min = min(mn_min, distanza_km(lat, lon, s["lat"], s["lon"]))
+    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO
     if usa_wc and not ha_mn_vicina:
         cat = wc_catalogo()
         raggio_vicino = 5.0
@@ -1876,8 +1876,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 s2["distanza_km"] = round(dkm, 1)
                 tutte_dist.append(s2)
         tutte_dist.sort(key=lambda x: x["distanza_km"])
-        vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino][:8]
-        # Oltre 5 km non si usa WeatherCloud: si passa a MeteoNetwork / modello
+        vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino]
+        # WC fino a 10 km se MN è oltre 8 km dal bosco
         pool = vicine_vicine
         if pool:
             migliore = None
@@ -1923,7 +1923,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     df_out = df_mm
                 oggi_mm = oggi.get("rain") if oggi else None
                 fonte = (
-                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km"
+                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km · più mm nel raggio 5 km"
                     + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
                     + f" · {n_pluvio} gg da pluviometro"
                 )
@@ -1954,7 +1954,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vicine_pub = []
         for staz in cat_mn:
             dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-            if dkm <= float(max_km_stazione):
+            if dkm <= RAGGIO_MN_BUONO:
                 s2 = dict(staz)
                 s2["distanza_km"] = round(dkm, 1)
                 vicine_pub.append(s2)
@@ -1964,9 +1964,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             chiavi = [w for w in re.split(r"[^a-zàèéìòù]+", nome_l) if len(w) >= 5]
             for s0 in cat_mn:
                 nn = (s0.get("nome") or "").lower()
-                if any(k in nn for k in chiavi):
+                dkm = distanza_km(lat, lon, s0["lat"], s0["lon"])
+                if any(k in nn for k in chiavi) and dkm <= RAGGIO_MN_BUONO:
                     s0 = dict(s0)
-                    s0["distanza_km"] = round(distanza_km(lat, lon, s0["lat"], s0["lon"]), 1)
+                    s0["distanza_km"] = round(dkm, 1)
                     vicine_pub.append(s0)
                     break
             if not vicine_pub:
@@ -1975,7 +1976,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     dkm = distanza_km(lat, lon, s0["lat"], s0["lon"])
                     extra.append((dkm, s0))
                 extra.sort(key=lambda x: x[0])
-                if extra and extra[0][0] <= 40:
+                if extra and extra[0][0] <= RAGGIO_MN_BUONO:
                     s0 = dict(extra[0][1])
                     s0["distanza_km"] = round(extra[0][0], 1)
                     vicine_pub.append(s0)
