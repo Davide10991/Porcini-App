@@ -25,7 +25,7 @@ except Exception:
 
 st.set_page_config(
     page_title="Porcini Predictor - Centro-Sud Italia",
-    page_icon="🍄",
+    page_icon="🍄‍🟫",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -52,12 +52,12 @@ st.markdown(
             center/cover fixed no-repeat;
     }
     .stApp::before {
-        content: "🍄";
+        content: "🍄‍🟫";
         position: fixed; left: 4%; bottom: 6%; font-size: 3.2rem;
         animation: floaty 6s ease-in-out infinite; opacity: .35; z-index: 0; pointer-events: none;
     }
     .stApp::after {
-        content: "🍄";
+        content: "🍄‍🟫";
         position: fixed; right: 6%; top: 12%; font-size: 2.4rem;
         animation: floaty 7.5s ease-in-out infinite reverse; opacity: .28; z-index: 0; pointer-events: none;
     }
@@ -115,7 +115,7 @@ if "ruolo" not in st.session_state:
 
 if not st.session_state["app_ok"]:
     st.markdown(
-        "<div class='login-card'><h1>🍄 Porcini Predictor</h1>"
+        "<div class='login-card'><h1>🍄‍🟫 Porcini Predictor</h1>"
         "<p>Scegli l'accesso.</p></div>",
         unsafe_allow_html=True,
     )
