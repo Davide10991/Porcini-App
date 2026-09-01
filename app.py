@@ -2285,31 +2285,10 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
         usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
     )
-    manca_t = df is None or "t_max" not in df.columns or pd.to_numeric(df.get("t_max"), errors="coerce").isna().all()
-    if manca_t:
-        dt = get_temperature_om(p["lat"], p["lon"], 30)
-        if dt is not None and df is not None and len(df):
-            df = df.copy()
-            df["date"] = pd.to_datetime(df["date"]).dt.normalize()
-            df = df.merge(dt, on="date", how="left", suffixes=("", "_om"))
-            if "t_max_om" in df.columns:
-                if "t_max" not in df.columns:
-                    df["t_max"] = df["t_max_om"]
-                else:
-                    df["t_max"] = pd.to_numeric(df["t_max"], errors="coerce").fillna(df["t_max_om"])
-            if "t_min_om" in df.columns:
-                if "t_min" not in df.columns:
-                    df["t_min"] = df["t_min_om"]
-                else:
-                    df["t_min"] = pd.to_numeric(df.get("t_min"), errors="coerce").fillna(df["t_min_om"])
-        elif dt is not None and df is None:
-            df = dt.copy()
-            df["precip"] = 0.0
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
         soil=soil, forecast=forecast, vento=vento,
     )
-    det["vento_dir"] = get_vento_direzione_om(p["lat"], p["lon"]) or "n/d"
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
@@ -2564,7 +2543,7 @@ with col1:
             {d.get('consiglio', '')}<br>
             <b>Pioggia ultimo mese: {tot_txt}</b><br>
             T max media: {d.get('t_max_media', 'n/d')} °C<br>
-            Vento 10gg: max {d.get('vento_max_10g', 'n/d')} km/h da {d.get('vento_dir', 'n/d')} · {d.get('nota_vento', '')}<br>
+            Vento 10gg: max {d.get('vento_max_10g', 'n/d')} km/h · {d.get('nota_vento', '')}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
