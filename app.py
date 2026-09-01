@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import re
+import base64
 from datetime import datetime, timedelta
 from math import radians, sin, cos, sqrt, atan2, exp
 import io
@@ -30,14 +31,21 @@ st.set_page_config(
 
 APP_PASSWORD = "Nonlasai1"
 
+def _sfondo_url():
+    p = Path(__file__).resolve().parent / "sfondo_porcini.jpg"
+    if p.exists():
+        b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+        return f"data:image/jpeg;base64,{b64}"
+    return "https://images.unsplash.com/photo-1505826759036-4ddee3257e2b?auto=format&fit=crop&w=1920&q=70"
+
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap');
     .stApp {
         background:
-            linear-gradient(180deg, rgba(18,12,8,.72) 0%, rgba(28,18,10,.62) 40%, rgba(12,18,10,.75) 100%),
-            url('https://images.unsplash.com/photo-1505826759036-4ddee3257e2b?auto=format&fit=crop&w=1920&q=70')
+            linear-gradient(180deg, rgba(18,12,8,.55) 0%, rgba(28,18,10,.50) 40%, rgba(12,18,10,.62) 100%),
+            url('__SFONDO__')
             center/cover fixed no-repeat;
     }
     .stApp::before {
@@ -84,7 +92,7 @@ st.markdown(
         text-align: center;
     }
     </style>
-    """,
+    """.replace("__SFONDO__", _sfondo_url()),
     unsafe_allow_html=True,
 )
 
