@@ -73,6 +73,14 @@ st.markdown(
         border-right: 1px solid rgba(196,154,88,.25);
     }
     [data-testid="stSidebar"] * { color: #f3e6d0 !important; }
+    [data-testid="stSidebar"][aria-expanded="false"] {
+        width: 0 !important;
+        min-width: 0 !important;
+        max-width: 0 !important;
+        overflow: hidden !important;
+        visibility: hidden !important;
+        border: none !important;
+    }
     .block-container { position: relative; z-index: 1; }
     div[data-testid="stMetric"] {
         background: rgba(255,248,235,.9);
@@ -91,10 +99,23 @@ st.markdown(
     footer {visibility: hidden !important;}
     .stDeployButton {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
-    [data-testid="stSidebar"] {
-        display: block !important;
-        transform: none !important;
-        visibility: visible !important;
+    [data-testid="stSidebarCollapsedControl"] svg,
+    [data-testid="collapsedControl"] svg,
+    [data-testid="stSidebarCollapsedControl"] span,
+    [data-testid="collapsedControl"] span,
+    [data-testid="stSidebarCollapseButton"] svg { display: none !important; }
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"] {
+        font-size: 0 !important;
+        color: transparent !important;
+    }
+    [data-testid="stSidebarCollapsedControl"]::before,
+    [data-testid="collapsedControl"]::before,
+    [data-testid="stSidebarCollapseButton"]::before {
+        content: "🍄‍🟫";
+        font-size: 1.8rem;
+        color: #5a3a1a;
+        line-height: 1;
     }
     .login-card {
         max-width: 420px; margin: 12vh auto; padding: 28px 26px;
@@ -2353,11 +2374,6 @@ st.caption(
 )
 
 with st.sidebar:
-    st.header("🌦️ Stazioni")
-    st.caption(
-        "Pioggia da MeteoNetwork (lista + archivio pubblico), senza login. "
-        "Se non c’è una stazione MN nel raggio, si usa WeatherCloud."
-    )
     usa_wc = True
     mn_email, mn_pass, collega_mn = "", "", False
     mn_token_manuale, mn_codici = "", ""
