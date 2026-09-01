@@ -2393,13 +2393,7 @@ with st.sidebar:
         file_name="mn_giorni_utente.json",
         mime="application/json",
     )
-    st.markdown("---")
-    st.subheader("📧 Notifiche Email")
-    email_dest = st.text_input("Email destinatario", value="davidemenna3@gmail.com")
-    smtp_user = st.text_input("La tua Gmail (mittente)", value="")
-    smtp_pass = st.text_input("App Password Gmail", type="password", value="")
     st.caption("Amministratore" if IS_ADMIN else "Guest")
-
     st.markdown("---")
     if st.button("Esci", use_container_width=True):
         st.session_state["app_ok"] = False
@@ -2412,47 +2406,8 @@ with st.sidebar:
         st.success("Cache svuotata")
 
 regole = {"pioggia_min": pioggia_min, "pioggia_max": pioggia_max}
-
-def _token_dai_secrets():
-    try:
-        return (
-            str(st.secrets.get("METEONETWORK_TOKEN", "") or "").strip()
-            or str(st.secrets.get("mn_token", "") or "").strip()
-        )
-    except Exception:
-        return ""
-
-
-mn_token = (
-    (mn_token_manuale or "").strip()
-    or st.session_state.get("mn_token")
-    or _token_dai_secrets()
-)
-if collega_mn:
-    tok, err = mn_login(mn_email, mn_pass)
-    if tok:
-        st.session_state["mn_token"] = tok
-        mn_token = tok
-        st.sidebar.success("MeteoNetwork collegato. Copia il token e salvalo.")
-        st.sidebar.code(tok, language=None)
-    else:
-        st.sidebar.error(err or "Login MeteoNetwork non riuscito")
-elif mn_token:
-    st.session_state["mn_token"] = mn_token
-    n_st = 0
-    try:
-        n_st = len(mn_stazioni_da_codici(mn_token, mn_codici))
-    except Exception:
-        n_st = 0
-    if n_st:
-        st.sidebar.success(f"MeteoNetwork attivo · {n_st} stazioni in rete")
-    else:
-        st.sidebar.warning(
-            "Token STANDARD ok. Inserisci i codici stazione (es. mls059) e premi Calcola. "
-            "Non chiedo più l'elenco completo: quello è BULK e causa 429."
-        )
-else:
-    st.sidebar.info("Senza MeteoNetwork uso stazioni ufficiali + modello ICON-2I. L'app funziona lo stesso.")
+mn_token = ""
+email_dest, smtp_user, smtp_pass = "", "", ""
 
 punti_filtrati = [
     p for p in PUNTI
@@ -2672,45 +2627,7 @@ if risultati_view:
     )
 
 st.markdown("---")
-st.subheader("📧 Invia report via email")
-
-corpo = f"""Report Porcini Predictor - {datetime.now().strftime('%d/%m/%Y %H:%M')}
-
-Regioni selezionate: {', '.join(regioni_sel)}
-Zone analizzate: {len(risultati_view)}
-
-=== CLASSIFICA ===
-"""
-for r in risultati_view[:15]:
-    d = r["dettaglio"]
-    corpo += f"""
-{r['nome']} ({r['regione']})
-  Punteggio: {r['score']:.0f}/100 - {r['livello']}
-  {d.get('consiglio', '')}
-  Pioggia 30g: {d.get('precip_totale_30g')} mm | 10g: {d.get('precip_10g')} mm
-  T max media: {d.get('t_max_media')} °C
-  Giorni da buona pioggia: {d.get('giorni_dalla_buona_pioggia')}
-"""
-
-if st.button("Invia report"):
-    if not smtp_user or not smtp_pass:
-        st.error("Inserisci Gmail e App Password nella sidebar.")
-    else:
-        ok, msg = invia_email(
-            email_dest,
-            f"🍄 Porcini Report - {datetime.now().strftime('%d/%m/%Y')}",
-            corpo,
-            smtp_user,
-            smtp_pass,
-        )
-        if ok:
-            st.success(msg)
-        else:
-            st.error(msg)
-
-st.markdown("---")
 st.caption(
-    "Fonte: MeteoNetwork (se collegato), stazioni ufficiali Meteostat, riserva Open-Meteo "
-    "(pioggia, temperature, previsione 7 giorni, umidità del suolo). "
+    "Fonte: MeteoNetwork pubblico (stazioni + archivio). "
     "Rispetta i regolamenti regionali su tesserini, quantitativi e specie protette."
 )
