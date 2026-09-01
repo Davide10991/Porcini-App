@@ -1758,6 +1758,26 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 s2["distanza_km"] = round(dkm, 1)
                 vicine_pub.append(s2)
         vicine_pub.sort(key=lambda x: x["distanza_km"])
+        if not vicine_pub and cat_mn:
+            nome_l = (nome_zona or "").lower()
+            chiavi = [w for w in re.split(r"[^a-zàèéìòù]+", nome_l) if len(w) >= 5]
+            for s0 in cat_mn:
+                nn = (s0.get("nome") or "").lower()
+                if any(k in nn for k in chiavi):
+                    s0 = dict(s0)
+                    s0["distanza_km"] = round(distanza_km(lat, lon, s0["lat"], s0["lon"]), 1)
+                    vicine_pub.append(s0)
+                    break
+            if not vicine_pub:
+                extra = []
+                for s0 in cat_mn:
+                    dkm = distanza_km(lat, lon, s0["lat"], s0["lon"])
+                    extra.append((dkm, s0))
+                extra.sort(key=lambda x: x[0])
+                if extra and extra[0][0] <= 40:
+                    s0 = dict(extra[0][1])
+                    s0["distanza_km"] = round(extra[0][0], 1)
+                    vicine_pub.append(s0)
         if vicine_pub:
             s = vicine_pub[0]
             prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
