@@ -29,7 +29,9 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Davide1099"
+ADMIN_USER = "Davide1099"
+ADMIN_PASS = "Ciccione99"
+GUEST_PASS = "Porcino1"
 
 def _sfondo_url():
     p = Path(__file__).resolve().parent / "sfondo_porcini.jpg"
@@ -84,6 +86,7 @@ st.markdown(
         transition: transform .15s ease, box-shadow .15s ease;
     }
     .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+    #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stStatusWidget"] {display: none !important;}
     .login-card {
         max-width: 420px; margin: 12vh auto; padding: 28px 26px;
         background: rgba(255,248,235,.92); border-radius: 22px;
@@ -98,21 +101,34 @@ st.markdown(
 
 if "app_ok" not in st.session_state:
     st.session_state["app_ok"] = False
+if "ruolo" not in st.session_state:
+    st.session_state["ruolo"] = "guest"
 
 if not st.session_state["app_ok"]:
     st.markdown(
         "<div class='login-card'><h1>🍄 Porcini Predictor</h1>"
-        "<p>Accesso riservato. Inserisci la password.</p></div>",
+        "<p>Scegli l'accesso.</p></div>",
         unsafe_allow_html=True,
     )
-    pw = st.text_input("Password", type="password", label_visibility="collapsed", placeholder="Password")
+    modo = st.radio("Tipo accesso", ["Guest", "Amministratore"], horizontal=True)
+    user = ""
+    if modo == "Amministratore":
+        user = st.text_input("Username", placeholder="Username")
+    pw = st.text_input("Password", type="password", placeholder="Password")
     if st.button("Entra nel bosco", type="primary", use_container_width=True):
-        if pw == APP_PASSWORD:
+        if modo == "Amministratore" and user == ADMIN_USER and pw == ADMIN_PASS:
             st.session_state["app_ok"] = True
+            st.session_state["ruolo"] = "admin"
+            st.rerun()
+        elif modo == "Guest" and pw == GUEST_PASS:
+            st.session_state["app_ok"] = True
+            st.session_state["ruolo"] = "guest"
             st.rerun()
         else:
-            st.error("Password errata")
+            st.error("Credenziali errate")
     st.stop()
+
+IS_ADMIN = st.session_state.get("ruolo") == "admin"
 
 # tipo: faggio 14 gg | castagno 10 gg | quercia 8 gg
 PUNTI = [
@@ -1937,10 +1953,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     if not str(k).lower().startswith(pref):
                         continue
                     try:
-                        recs.append({
+                        rec = {
                             "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
                             "precip": float((v or {}).get("precip") or 0),
-                        })
+                        }
+                        for kk in ("t_max", "t_min", "t_med", "vento_max"):
+                            if v and v.get(kk) is not None:
+                                rec[kk] = float(v[kk])
+                        recs.append(rec)
                     except Exception:
                         pass
                 if recs:
@@ -2355,7 +2375,6 @@ with st.sidebar:
     max_km_stazione = st.slider(
         "Distanza max stazione (km)",
         10, 60, 35, 5,
-        help="Oltre questa distanza si usa il modello ICON-2I sul punto del bosco, non un aeroporto lontano.",
     )
     _carica_giorni_file()
     giorni_json = json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False)
@@ -2364,16 +2383,19 @@ with st.sidebar:
         data=giorni_json,
         file_name="mn_giorni_utente.json",
         mime="application/json",
-        help="Dopo Calcola scarica questo file e sostituiscilo su GitHub. Su Cloud il disco si cancella al reboot.",
     )
-
     st.markdown("---")
     st.subheader("📧 Notifiche Email")
     email_dest = st.text_input("Email destinatario", value="davidemenna3@gmail.com")
     smtp_user = st.text_input("La tua Gmail (mittente)", value="")
     smtp_pass = st.text_input("App Password Gmail", type="password", value="")
+    st.caption("Amministratore" if IS_ADMIN else "Guest")
 
     st.markdown("---")
+    if st.button("Esci", use_container_width=True):
+        st.session_state["app_ok"] = False
+        st.session_state["ruolo"] = "guest"
+        st.rerun()
     calcola = st.button("🔄 Calcola / aggiorna dati", type="primary", use_container_width=True)
     if st.button("Svuota cache meteo", use_container_width=True):
         st.cache_data.clear()
@@ -2534,6 +2556,7 @@ with col1:
                 giorni_html = "<br>".join(giorni_pioggia)
             tot_txt = f"{tot_staz} mm" if tot_staz is not None else f"{d.get('precip_totale_30g', 'n/d')} mm"
             popup_html = f"""
+            <div style="max-height:200px;overflow:auto;font-size:12px;line-height:1.35;max-width:240px;">
             <b>{r['nome']}</b><br>
             Regione: {r['regione']}<br>
             Tipo: {r['tipo']}<br>
@@ -2547,6 +2570,7 @@ with col1:
             Fonte: {meteo.get('fonte', 'n/d')}<br>
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
+            </div>
             """
             folium.CircleMarker(
                 location=[r["lat"], r["lon"]],
@@ -2555,7 +2579,8 @@ with col1:
                 fill=True,
                 fill_color=color,
                 fill_opacity=0.75,
-                popup=folium.Popup(popup_html, max_width=360),
+                tooltip=f"{r['nome']} · {r['score']:.0f}",
+                popup=folium.Popup(popup_html, max_width=260),
             ).add_to(m)
         st_folium(m, width=700, height=520, returned_objects=[])
     else:
@@ -2628,7 +2653,8 @@ if risultati_view:
         "fonte": r.get("meteo", {}).get("fonte"),
         "stazione": r.get("meteo", {}).get("stazione"),
     } for r in risultati_view])
-    st.dataframe(tab, use_container_width=True, hide_index=True)
+    tab = tab.astype(str)
+    st.dataframe(tab, width="stretch", hide_index=True)
     st.download_button(
         "Scarica CSV",
         tab.to_csv(index=False).encode("utf-8"),
