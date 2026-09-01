@@ -1357,6 +1357,10 @@ def mn_catalogo_pubblico():
             "oggi_mm": oggi,
             "mese_mm": mese,
         })
+    if len(out) < 50:
+        locale = _mn_catalogo_file()
+        if locale:
+            return locale
     return out
 
 
@@ -1804,6 +1808,22 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             df_mn = mn_archivio_pubblico(s["code"], 2)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
+            if df_mn is None:
+                store = _carica_giorni_file()
+                recs = []
+                pref = str(s.get("code") or "").lower() + "|"
+                for k, v in (store or {}).items():
+                    if not str(k).lower().startswith(pref):
+                        continue
+                    try:
+                        recs.append({
+                            "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
+                            "precip": float((v or {}).get("precip") or 0),
+                        })
+                    except Exception:
+                        pass
+                if recs:
+                    df_mn = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
             serie = None
             if df_mn is not None and len(df_mn):
                 df_mn = df_mn.copy()
@@ -1832,7 +1852,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 info["pioggia_stazione_30g"] = _mm(serie)
                 if "vento_max" in serie.columns:
                     vento = riepilogo_vento(serie)
-                return serie, info, forecast, soil, vento
+            else:
+                info["pioggia_stazione_30g"] = 0.0
+                serie = pd.DataFrame({"date": [], "precip": []})
+            return serie, info, forecast, soil, vento
 
     # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
