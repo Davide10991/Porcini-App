@@ -29,7 +29,7 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Nonlasai1"
+APP_PASSWORD = "Davide1099"
 
 def _sfondo_url():
     p = Path(__file__).resolve().parent / "sfondo_porcini.jpg"
