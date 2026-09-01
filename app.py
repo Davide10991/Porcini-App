@@ -26,7 +26,8 @@ except Exception:
 st.set_page_config(
     page_title="Porcini Predictor - Centro-Sud Italia",
     page_icon="🍄",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 ADMIN_USER = "Davide1099"
@@ -86,7 +87,15 @@ st.markdown(
         transition: transform .15s ease, box-shadow .15s ease;
     }
     .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
-    #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stStatusWidget"] {display: none !important;}
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    .stDeployButton {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="stSidebar"] {
+        display: block !important;
+        transform: none !important;
+        visibility: visible !important;
+    }
     .login-card {
         max-width: 420px; margin: 12vh auto; padding: 28px 26px;
         background: rgba(255,248,235,.92); border-radius: 22px;
