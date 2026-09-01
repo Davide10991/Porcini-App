@@ -28,7 +28,7 @@ st.set_page_config(
     layout="wide"
 )
 
-APP_PASSWORD = "Davide1099"
+APP_PASSWORD = "Nonlasai1"
 
 st.markdown(
     """
@@ -1429,6 +1429,39 @@ def mn_archivio_pubblico(code, mesi=2):
                 except Exception:
                     pass
             records.append(rec)
+    store = _carica_giorni_file()
+    for rec in records:
+        d = pd.to_datetime(rec["date"]).date().isoformat()
+        key = f"{code}|{d}"
+        rain = float(rec.get("precip") or 0)
+        old = store.get(key) or {}
+        old_rain = None
+        try:
+            old_rain = float(old.get("precip") if isinstance(old, dict) else old)
+        except Exception:
+            old_rain = None
+        # se MN azzera il mese, tengo il valore già salvato
+        if old_rain is not None and rain <= 0 and old_rain > 0:
+            rec["precip"] = old_rain
+        elif rain > 0 or key not in store:
+            store[key] = {"precip": rain, "date": d}
+    # reintegro giorni salvati degli ultimi 40 gg anche se MN non li manda più
+    oggi = datetime.now().date()
+    have = {pd.to_datetime(r["date"]).date().isoformat() for r in records}
+    for i in range(40):
+        d = (oggi - timedelta(days=i)).isoformat()
+        key = f"{code}|{d}"
+        if d in have or key not in store:
+            continue
+        try:
+            records.append({
+                "date": pd.Timestamp(d),
+                "precip": float((store[key] or {}).get("precip") or 0),
+            })
+        except Exception:
+            pass
+    st.session_state["mn_giorni"] = store
+    _salva_giorni_file()
     if not records:
         return None
     return pd.DataFrame(records).drop_duplicates("date").sort_values("date")
@@ -1655,7 +1688,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 or str(s.get("code") or "").lower() in {"mls052", "mls064"}
             ):
                 s = prefer["mls071"]
-            df_mn = mn_archivio_pubblico(s["code"], 2)
+            df_mn = mn_archivio_pubblico(s["code"], 3)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
             serie = storico_om.copy() if storico_om is not None else None
