@@ -36,7 +36,7 @@ def _sfondo_url():
     if p.exists():
         b64 = base64.b64encode(p.read_bytes()).decode("ascii")
         return f"data:image/jpeg;base64,{b64}"
-    return "https://images.unsplash.com/photo-1505826759036-4ddee3257e2b?auto=format&fit=crop&w=1920&q=70"
+    return ""
 
 st.markdown(
     """
@@ -1346,6 +1346,80 @@ def mn_catalogo_pubblico():
     return out
 
 
+@st.cache_data(ttl=3600)
+def fm_pdf_mese(slug, quale="precedente"):
+    """PDF mese corrente/precedente del Semaforo Funghimagazine."""
+    if not slug:
+        return None
+    v = datetime.now().strftime("%Y%m%d%H00")
+    url = (
+        f"https://funghimagazine.it/wp-content/uploads/pdf_stazioni/"
+        f"storico_{quale}/{slug}.pdf?v={v}"
+    )
+    try:
+        r = requests.get(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://funghimagazine.it/lazio-semaforo-dei-funghi/",
+                "Accept": "application/pdf,*/*",
+            },
+            timeout=25,
+        )
+        if r.status_code != 200 or not (r.content or b"").startswith(b"%PDF"):
+            return None
+        from pypdf import PdfReader
+        import io
+        text = ""
+        reader = PdfReader(io.BytesIO(r.content))
+        for page in reader.pages:
+            text += (page.extract_text() or "") + "\n"
+    except Exception:
+        return None
+    records = []
+    for m in re.finditer(
+        r"(20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]20\d{2})\s+(-?\d+[.,]?\d*)",
+        text,
+    ):
+        ds, vs = m.group(1), m.group(2).replace(",", ".")
+        try:
+            mm = float(vs)
+        except Exception:
+            continue
+        dt = None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y"):
+            try:
+                dt = datetime.strptime(ds, fmt)
+                break
+            except Exception:
+                continue
+        if dt:
+            records.append({"date": pd.Timestamp(dt.date()), "precip": mm})
+    if not records:
+        return None
+    return pd.DataFrame(records).drop_duplicates("date").sort_values("date")
+
+
+FM_LOCALITA = {
+    "Abruzzo": [
+        "gran sasso", "campo imperatore", "majella", "popoli", "fara san martino",
+        "atessa", "ofena", "ovindoli", "roccaraso", "sulmona", "pescasseroli",
+        "scanno", "castel di sangro", "pacentro", "caramanico", "pietracamela",
+        "prati di tivo", "blockhaus", "passolanciano",
+    ],
+    "Campania": [
+        "matese", "piedimonte", "cusano", "irpinia", "cilento", "sarno",
+        "calitri", "sapri", "amalfi", "montella", "bagnoli", "laceno",
+        "serino", "roccamonfina", "teano", "avellino", "benevento",
+        "picentini", "terminio", "alburni",
+    ],
+    "Lazio": [
+        "terminillo", "leonessa", "cimini", "soratte", "simbruini", "subiaco",
+        "ernici", "fiuggi", "lepini", "aurunci", "ausoni", "rieti",
+        "viterbo", "frosinone", "cassino", "sora", "alatri", "filettino",
+    ],
+}
+
 CAPUT_FRIGORIS = {
     "valle castellana": "TE080",
     "rocca santa maria": "TE106",
@@ -1515,7 +1589,7 @@ def wc_oggi(device_id):
 
 
 @st.cache_data(ttl=3600)
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona=""):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
         "stazione": "n/d",
@@ -1696,7 +1770,28 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 or str(s.get("code") or "").lower() in {"mls052", "mls064"}
             ):
                 s = prefer["mls071"]
-            df_mn = mn_archivio_pubblico(s["code"], 3)
+            df_mn = None
+            token_nome = re.sub(r"\(.*\)", "", s.get("nome") or nome_zona or "")
+            token_nome = token_nome.split("-")[-1].strip()
+            token_nome = re.sub(r"[^A-Za-z0-9]+", "_", token_nome).strip("_")
+            provs = {
+                "Abruzzo": ["AQ", "TE", "PE", "CH"],
+                "Molise": ["IS", "CB"],
+                "Campania": ["CE", "BN", "AV", "SA", "NA"],
+                "Lazio": ["RM", "FR", "LT", "RI", "VT"],
+            }.get(regione or "", ["AQ", "IS", "CE", "FR", "VT"])
+            pezzi_fm = []
+            for quale in ("precedente", "corrente"):
+                for prov in provs:
+                    slug = f"_{token_nome}_{prov}"
+                    dfp = fm_pdf_mese(slug, quale)
+                    if dfp is not None and len(dfp):
+                        pezzi_fm.append(dfp)
+                        break
+            if pezzi_fm:
+                df_mn = pd.concat(pezzi_fm, ignore_index=True).drop_duplicates("date").sort_values("date")
+            if df_mn is None:
+                df_mn = mn_archivio_pubblico(s["code"], 3)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
             serie = storico_om.copy() if storico_om is not None else None
@@ -2051,7 +2146,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
-        usa_wc=usa_wc, nome_zona=p.get("nome") or "",
+        usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
     )
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
