@@ -2365,7 +2365,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
 
 
 # ===================== UI =====================
-st.title("🍄 Porcini Predictor")
+st.title("🍄‍🟫 Porcini Predictor")
 st.markdown("**Abruzzo • Molise • Lazio • Campania**")
 st.caption(
     "Zone boschive principali delle 4 regioni. Non è ogni singolo bosco, "
@@ -2415,7 +2415,7 @@ with st.sidebar:
         st.session_state["app_ok"] = False
         st.session_state["ruolo"] = "guest"
         st.rerun()
-    calcola = st.button("🔄 Calcola / aggiorna dati", type="primary", use_container_width=True)
+    calcola = st.button("🍄‍🟫 Calcola / aggiorna dati", type="primary", use_container_width=True)
     if st.button("Svuota cache meteo", use_container_width=True):
         st.cache_data.clear()
         st.session_state.pop("risultati", None)
@@ -2433,7 +2433,7 @@ punti_filtrati = [
     and (cerca.lower() in p["nome"].lower() if cerca else True)
 ]
 
-st.header("📍 Situazione attuale")
+st.header("🍄‍🟫 Situazione attuale")
 st.write(f"Zone selezionate: **{len(punti_filtrati)}** su {len(PUNTI)} totali")
 
 if not punti_filtrati:
@@ -2609,7 +2609,7 @@ with col2:
             st.progress(min(100, int(r["score"])) / 100)
 
 st.markdown("---")
-st.subheader("📊 Tabella e export")
+st.subheader("🍄‍🟫 Tabella e export")
 if risultati_view:
     tab = pd.DataFrame([{
         "zona": r["nome"],
