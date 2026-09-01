@@ -1857,14 +1857,34 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df_cf is not None and len(df_cf):
             return df_cf, info, forecast, soil, vento
 
-    # WeatherCloud se la MN più vicina è troppo lontana dal bosco (>8 km in linea d'aria)
+    # MN solo se entro 5 km E senza troppi buchi; altrimenti WC (più giorni / più mm)
     RAGGIO_MN_BUONO = 5.0
+
+    def _giorni_pieni(dfx):
+        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
+            return 0
+        try:
+            dd = dfx.copy()
+            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
+            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+            dd = dd[dd["date"] >= taglio]
+            return int(pd.to_numeric(dd["precip"], errors="coerce").notna().sum())
+        except Exception:
+            return 0
+
     cat_mn_pre = mn_catalogo_pubblico()
     mn_min = 999.0
+    mn_near = None
     if cat_mn_pre:
         for s in cat_mn_pre:
-            mn_min = min(mn_min, distanza_km(lat, lon, s["lat"], s["lon"]))
-    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO
+            dkm = distanza_km(lat, lon, s["lat"], s["lon"])
+            if dkm < mn_min:
+                mn_min = dkm
+                mn_near = s
+    n_mn = 0
+    if mn_near is not None and mn_min <= RAGGIO_MN_BUONO:
+        n_mn = _giorni_pieni(mn_archivio_pubblico(mn_near.get("code"), 2))
+    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20
     if usa_wc and not ha_mn_vicina:
         cat = wc_catalogo()
         raggio_vicino = 5.0
@@ -1885,10 +1905,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             for cand in pool:
                 df_c = wc_mese_pioggia(cand.get("id") or cand["code"])
                 mm_c = 0.0
+                n_c = 0
                 if df_c is not None and len(df_c) and "precip" in df_c.columns:
                     mm_c = float(df_c["precip"].sum(skipna=True))
+                    n_c = _giorni_pieni(df_c)
                 dist = float(cand.get("distanza_km") or 99)
-                rank = (mm_c, -dist)
+                rank = (n_c, mm_c, -dist)
                 if migliore is None or rank > migliore[0]:
                     migliore = (rank, cand, df_c, mm_c)
             s = migliore[1] if migliore else pool[0]
