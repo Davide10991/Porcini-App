@@ -1907,6 +1907,31 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             return 0
 
+    def _affidabilita(dfx, online=True, dist=5.0):
+        n = _giorni_pieni(dfx)
+        if n < 8:
+            return -1.0
+        try:
+            mm = float(pd.to_numeric(dfx["precip"], errors="coerce").sum())
+        except Exception:
+            mm = 0.0
+        has_t = False
+        has_v = False
+        try:
+            has_t = "t_max" in dfx.columns and pd.to_numeric(dfx["t_max"], errors="coerce").notna().sum() >= 5
+            has_v = "vento_max" in dfx.columns and pd.to_numeric(dfx["vento_max"], errors="coerce").notna().sum() >= 5
+        except Exception:
+            pass
+        score = n * 3.0 + min(mm, 250) * 0.6
+        if has_t:
+            score += 18
+        if has_v:
+            score += 10
+        if online:
+            score += 8
+        score -= float(dist) * 1.5
+        return score
+
     cat_mn_pre = mn_catalogo_pubblico()
     mn_min = 999.0
     mn_near = None
@@ -1917,9 +1942,39 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 mn_min = dkm
                 mn_near = s
     n_mn = 0
+    mm_mn = 0.0
+    df_mn_peek = None
     if mn_near is not None and mn_min <= RAGGIO_MN_BUONO:
-        n_mn = _giorni_pieni(mn_archivio_pubblico(mn_near.get("code"), 2))
-    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20
+        df_mn_peek = mn_archivio_pubblico(mn_near.get("code"), 2)
+        n_mn = _giorni_pieni(df_mn_peek)
+        try:
+            mm_mn = float(pd.to_numeric(df_mn_peek["precip"], errors="coerce").sum()) if df_mn_peek is not None else 0.0
+        except Exception:
+            mm_mn = 0.0
+    wc_piu_pioggia = False
+    if usa_wc and mn_min <= RAGGIO_MN_BUONO:
+        try:
+            cat_peek = wc_catalogo()
+            candid = []
+            for staz in cat_peek:
+                dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
+                if dkm <= RAGGIO_MN_BUONO:
+                    candid.append((dkm, staz))
+            candid.sort(key=lambda x: x[0])
+            for dkm, staz in candid[:5]:
+                df_c = wc_mese_pioggia(staz.get("id") or staz.get("code"))
+                if df_c is None or "precip" not in df_c.columns:
+                    continue
+                mm_c = float(pd.to_numeric(df_c["precip"], errors="coerce").sum())
+                n_c = _giorni_pieni(df_c)
+                sc_c = _affidabilita(df_c, online=bool(staz.get("online", True)), dist=dkm)
+                sc_m = _affidabilita(df_mn_peek, online=True, dist=mn_min)
+                if sc_c > sc_m:
+                    wc_piu_pioggia = True
+                    break
+        except Exception:
+            wc_piu_pioggia = False
+    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20 and not wc_piu_pioggia
     if usa_wc and not ha_mn_vicina:
         cat = wc_catalogo()
         raggio_vicino = 5.0
@@ -1932,6 +1987,11 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 tutte_dist.append(s2)
         tutte_dist.sort(key=lambda x: x["distanza_km"])
         vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino]
+        nome_l = (nome_zona or "").lower()
+        if any(k in nome_l for k in ("cusano", "mutri", "casano")):
+            preferite = [x for x in vicine_vicine if "vitelli" in (x.get("nome") or "").lower() or str(x.get("code") or "").upper() == "3EE8J9B"]
+            altre = [x for x in vicine_vicine if x not in preferite]
+            vicine_vicine = preferite + altre
         # WC fino a 10 km se MN è oltre 8 km dal bosco
         pool = vicine_vicine
         if pool:
@@ -1945,7 +2005,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     mm_c = float(df_c["precip"].sum(skipna=True))
                     n_c = _giorni_pieni(df_c)
                 dist = float(cand.get("distanza_km") or 99)
-                rank = (n_c, mm_c, -dist)
+                rank = (_affidabilita(df_c, online=bool(cand.get("online", True)), dist=dist), n_c, mm_c, -dist)
                 if migliore is None or rank > migliore[0]:
                     migliore = (rank, cand, df_c, mm_c)
             s = migliore[1] if migliore else pool[0]
