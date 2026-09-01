@@ -160,7 +160,7 @@ if not st.session_state["app_ok"]:
 
 IS_ADMIN = st.session_state.get("ruolo") == "admin"
 
-# tipo: faggio 14 gg | castagno 10 gg | quercia 8 gg
+# attesa pioggia (FM): faggio 15 | castagno 13 | quercia 12 — durata buttata 15-20 gg
 PUNTI = [
     # ===================== ABRUZZO =====================
     {"nome": "Gran Sasso - Campo Imperatore", "lat": 42.450, "lon": 13.550, "tipo": "faggio", "quota": 1600, "regione": "Abruzzo"},
@@ -1598,6 +1598,7 @@ FM_LOCALITA = {
 CAPUT_FRIGORIS = {
     "valle castellana": "TE080",
     "rocca santa maria": "TE106",
+    "ceppo": "TE106",
 }
 
 
@@ -1808,37 +1809,52 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             cf_id = sid
             break
     if cf_id:
-        cf = cf_scheda(cf_id)
-        if cf and cf.get("mese_mm") is not None:
-            oggi = datetime.now().date()
-            rows = []
-            for i in range(30):
-                d = oggi - timedelta(days=29 - i)
-                mm = 0.0
-                if i == 14:
-                    mm = max(0.0, float(cf["mese_mm"]) - float(cf.get("oggi_mm") or 0))
-                if i == 29:
-                    mm = float(cf.get("oggi_mm") or 0)
-                rec = {"date": pd.Timestamp(d), "precip": mm}
-                if storico_om is not None and "t_max" in storico_om.columns:
-                    pass
+        cf = cf_scheda(cf_id) or {"nome": cf_id, "oggi_mm": None, "mese_mm": None, "anno_mm": None}
+        store = _carica_giorni_file()
+        rows = []
+        pref = f"{cf_id}|"
+        for k, v in (store or {}).items():
+            if not str(k).startswith(pref):
+                continue
+            try:
+                rec = {
+                    "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
+                    "precip": float((v or {}).get("precip") or 0),
+                }
+                for kk in ("t_max", "t_min", "t_med", "vento_max"):
+                    if v and v.get(kk) is not None:
+                        rec[kk] = float(v[kk])
                 rows.append(rec)
-            df_cf = pd.DataFrame(rows)
-            # temperature solo dalla scheda CF se presenti; niente Open-Meteo
-            info = {
-                "fonte": (
-                    f"Caput Frigoris {cf.get('nome')} ({cf_id}) · "
-                    f"oggi {cf.get('oggi_mm')} mm · mese {cf.get('mese_mm')} mm"
-                ),
-                "stazione": cf.get("nome"),
-                "distanza_km": 0,
-                "pioggia_stazione_30g": cf.get("mese_mm"),
-                "giorni_pluviometro": [
-                    f"oggi: {cf.get('oggi_mm')} mm",
-                    f"mese in corso: {cf.get('mese_mm')} mm",
-                    f"anno: {cf.get('anno_mm')} mm",
-                ],
-            }
+            except Exception:
+                pass
+        if cf.get("oggi_mm") is not None:
+            rows.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(cf.get("oggi_mm") or 0)})
+        df_cf = None
+        if rows:
+            df_cf = pd.DataFrame(rows).drop_duplicates("date").sort_values("date")
+            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+            df_cf = df_cf[df_cf["date"] >= taglio]
+        giorni = []
+        if df_cf is not None:
+            for _, rr in df_cf.iterrows():
+                if float(rr.get("precip") or 0) >= 0.2:
+                    giorni.append(f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm")
+        info = {
+            "fonte": (
+                f"Caput Frigoris {cf.get('nome')} ({cf_id})"
+                + (f" · oggi {cf.get('oggi_mm')} mm" if cf.get("oggi_mm") is not None else "")
+                + (f" · mese {cf.get('mese_mm')} mm" if cf.get("mese_mm") is not None else "")
+                + " · agosto da archivio locale"
+            ),
+            "stazione": cf.get("nome") or cf_id,
+            "distanza_km": 0,
+            "pioggia_stazione_30g": _mm(df_cf),
+            "giorni_pluviometro": giorni or [
+                f"oggi: {cf.get('oggi_mm')} mm",
+                f"mese in corso: {cf.get('mese_mm')} mm",
+            ],
+        }
+        if df_cf is not None and len(df_cf):
             return df_cf, info, forecast, soil, vento
 
     # 0) WeatherCloud solo se NON c'è una MeteoNetwork nel raggio
@@ -2130,6 +2146,80 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     return None, info, forecast, soil, vento
 
 
+def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
+    """Buttata secondo FunghiMagazine: nasce 12-15 gg dopo pioggia importante,
+    dura in media 15 gg, 15-20 se condizioni buone, fino a ~30 se ideali
+    (poco vento, temp non estreme, tanta acqua prima)."""
+    if df is None or len(df) == 0 or "precip" not in df.columns:
+        return []
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"]).dt.normalize()
+    d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0)
+    d = d.sort_values("date")
+    eventi = []
+    acc = 0.0
+    start = None
+    last = None
+    for _, row in d.iterrows():
+        mm = float(row["precip"])
+        giorno = row["date"]
+        if mm >= 2:
+            if start is None:
+                start = giorno
+                acc = mm
+            elif last is not None and (giorno - last).days <= 3:
+                acc += mm
+            else:
+                if acc >= 20:
+                    eventi.append((last or start, acc))
+                start = giorno
+                acc = mm
+            last = giorno
+        elif start is not None and last is not None and (giorno - last).days > 3:
+            if acc >= 20:
+                eventi.append((last, acc))
+            start, acc, last = None, 0.0, None
+    if start is not None and acc >= 20:
+        eventi.append((last or start, acc))
+
+    oggi = pd.Timestamp(datetime.now().date())
+    # caldo torrido + vento: FM dice che inibiscono o chiudono la buttata
+    if t_max_media >= 30:
+        dur_clima = 0.55
+    elif t_max_media >= 27:
+        dur_clima = 0.72
+    elif 16 <= t_max_media <= 26:
+        dur_clima = 1.0
+    else:
+        dur_clima = 0.9
+    if fattore_v < 0.4:
+        dur_clima *= 0.55
+    elif fattore_v < 0.7:
+        dur_clima *= 0.75
+    out = []
+    for data_evt, mm in eventi:
+        # base 15 gg; 20 se tanta acqua; fino a 30 se spugnata abbondante e clima ok
+        if mm >= 60 and dur_clima >= 0.95:
+            durata = 28
+        elif mm >= 40 and dur_clima >= 0.85:
+            durata = 20
+        else:
+            durata = 15
+        durata = max(7, round(durata * dur_clima))
+        inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=giorni_attesa)
+        fine = inizio + pd.Timedelta(days=durata)
+        attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
+        out.append({
+            "pioggia_mm": round(float(mm), 1),
+            "data_pioggia": pd.Timestamp(data_evt).date().isoformat(),
+            "inizio": inizio.date().isoformat(),
+            "fine": fine.date().isoformat(),
+            "attiva": attiva,
+            "giorni_alla_fine": int((fine.normalize() - oggi).days) if attiva else None,
+        })
+    return out
+
+
 def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
     """Stima i prossimi giorni utili in base al ritardo dalla spugnata e alla previsione."""
     if giorni_dalla_pioggia is None or giorni_dalla_pioggia >= 99:
@@ -2229,30 +2319,34 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     else:
         score_temp += 3
 
+    # FM: estivi 12-15 gg dopo l'ultima pioggia importante;
+    # in faggeta (più fresca, pinophilus/edulis) un filo più lunga
     if tipo_bosco == "faggio":
-        giorni_attesa = 14
+        giorni_attesa = 15
     elif tipo_bosco == "castagno":
-        giorni_attesa = 10
+        giorni_attesa = 13
     else:
-        giorni_attesa = 8
+        giorni_attesa = 12
 
+    vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
+    fattore_v = float(vento.get("fattore_vento") or 1.0)
+    buttate = trova_buttate(df, giorni_attesa, t_max_media, fattore_v)
+    attive = [b for b in buttate if b.get("attiva")]
     giorni_dalla_pioggia = 99
-    cum = 0
-    for i in range(len(df) - 1, -1, -1):
-        val = df.iloc[i]["precip"]
-        if pd.isna(val):
-            continue
-        cum += float(val)
-        if cum >= 30:
-            giorni_dalla_pioggia = len(df) - 1 - i
-            break
+    if buttate:
+        ultima = pd.to_datetime(buttate[-1]["data_pioggia"])
+        giorni_dalla_pioggia = int((pd.Timestamp(datetime.now().date()) - ultima.normalize()).days)
 
-    if giorni_attesa - 4 <= giorni_dalla_pioggia <= giorni_attesa + 3:
-        score_tempo = 20
-    elif giorni_dalla_pioggia < giorni_attesa:
-        score_tempo = 10
+    if len(attive) >= 2:
+        score_tempo = 28
+    elif attive:
+        score_tempo = 22
+    elif buttate:
+        # c'è stata acqua ma la buttata è finita o non è ancora nata
+        prossime = [b for b in buttate if pd.to_datetime(b["inizio"]) > pd.Timestamp(datetime.now().date())]
+        score_tempo = 12 if prossime else 4
     else:
-        score_tempo = 5
+        score_tempo = 3
 
     score_suolo = 0
     if soil is not None:
@@ -2262,14 +2356,22 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         elif 0.18 <= soil <= 0.42:
             score_suolo = 5
 
-    vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
-    fattore_v = float(vento.get("fattore_vento") or 1.0)
-
-    # il vento persistente brucia l'effetto della pioggia e del suolo (decadimento esponenziale)
+    # il vento persistente brucia l'effetto della pioggia e del suolo
     umido = (score_pioggia + score_tempo + score_suolo) * fattore_v
-    bonus_ur = 0
     punteggio_totale = min(100, umido + score_temp * (0.45 + 0.55 * fattore_v))
-    consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
+    if attive:
+        pezzi = [f"{b['pioggia_mm']} mm il {b['data_pioggia']} (fino al {b['fine']})" for b in attive]
+        consiglio = "Buttata aperta: " + " · ".join(pezzi)
+        if len(attive) >= 2:
+            consiglio = "Buttate incrociate · " + consiglio
+    elif buttate:
+        ultime = buttate[-1]
+        if pd.to_datetime(ultime["inizio"]) > pd.Timestamp(datetime.now().date()):
+            consiglio = f"Buttata in arrivo dal {ultime['inizio']} (pioggia {ultime['pioggia_mm']} mm il {ultime['data_pioggia']})"
+        else:
+            consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova spugnata"
+    else:
+        consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
     if fattore_v < 0.5:
         consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
 
@@ -2291,8 +2393,14 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "giorni_vento_consecutivi": vento.get("giorni_consecutivi_venti"),
         "fattore_vento": vento.get("fattore_vento"),
         "nota_vento": vento.get("nota_vento"),
+        "buttate": buttate,
+        "buttate_attive": len(attive),
     }
 
+    # senza buttata aperta non è verde, anche con 60 mm a inizio mese
+    if not attive:
+        punteggio_totale = min(punteggio_totale, 48)
+        dettaglio["consiglio"] = consiglio
     # Poca acqua nel mese: non può essere una buttata "ALTA"
     if precip_totale < 25:
         punteggio_totale = min(punteggio_totale, 42)
