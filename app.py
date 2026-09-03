@@ -521,6 +521,20 @@ PUNTI = [
     {"nome": "Monti Lattari - Scala / Ravello", "lat": 40.653, "lon": 14.608, "tipo": "quercia", "quota": 400, "regione": "Campania"},
     {"nome": "Monti Lattari - Gragnano / Lettere", "lat": 40.689, "lon": 14.515, "tipo": "quercia", "quota": 350, "regione": "Campania"},
     {"nome": "Monti Lattari - Vico Equense", "lat": 40.661, "lon": 14.427, "tipo": "quercia", "quota": 400, "regione": "Campania"},
+    {"nome": "Abetina di Rosello", "lat": 41.901, "lon": 14.349, "tipo": "abete_bianco", "quota": 1000, "regione": "Abruzzo"},
+    {"nome": "Laga - Bosco della Martese / Ceppo", "lat": 42.700, "lon": 13.480, "tipo": "abete_bianco", "quota": 1300, "regione": "Abruzzo"},
+    {"nome": "Laga - Cortino / Altovia", "lat": 42.627, "lon": 13.507, "tipo": "abete_bianco", "quota": 1200, "regione": "Abruzzo"},
+    {"nome": "Laga - Monte Pelone", "lat": 42.735, "lon": 13.460, "tipo": "abete_bianco", "quota": 1400, "regione": "Abruzzo"},
+    {"nome": "Gran Sasso - Piana dell'Abete / Segadacqua", "lat": 42.548, "lon": 13.478, "tipo": "abete_bianco", "quota": 1300, "regione": "Abruzzo"},
+    {"nome": "Gran Sasso - Fonte Vetica abeti", "lat": 42.448, "lon": 13.575, "tipo": "abete_rosso", "quota": 1600, "regione": "Abruzzo"},
+    {"nome": "PNALM - Selva di Ornano", "lat": 41.790, "lon": 13.820, "tipo": "abete_bianco", "quota": 1400, "regione": "Abruzzo"},
+    {"nome": "Alto Sangro - Aremogna abeti", "lat": 41.808, "lon": 14.045, "tipo": "abete_rosso", "quota": 1500, "regione": "Abruzzo"},
+    {"nome": "Abeti Soprani - Pescopennataro", "lat": 41.878, "lon": 14.294, "tipo": "abete_bianco", "quota": 1200, "regione": "Molise"},
+    {"nome": "Sant'Angelo del Pesco - abetine", "lat": 41.889, "lon": 14.255, "tipo": "abete_bianco", "quota": 1100, "regione": "Molise"},
+    {"nome": "Capracotta - abete bianco", "lat": 41.833, "lon": 14.266, "tipo": "abete_bianco", "quota": 1400, "regione": "Molise"},
+    {"nome": "Terminillo - rimboschimenti abete", "lat": 42.473, "lon": 12.997, "tipo": "abete_rosso", "quota": 1600, "regione": "Lazio"},
+    {"nome": "Monti della Duchessa - conifere", "lat": 42.180, "lon": 13.330, "tipo": "abete_rosso", "quota": 1500, "regione": "Lazio"},
+    {"nome": "Matese - rimboschimenti abete", "lat": 41.460, "lon": 14.380, "tipo": "abete_rosso", "quota": 1400, "regione": "Campania"},
 ]
 
 # Stazioni ufficiali (WMO / Aeronautica / aeroporti) nelle 4 regioni e dintorni
@@ -1429,6 +1443,26 @@ def _wc_evolution(device_id, variable):
 
 
 @st.cache_data(ttl=3600)
+def wc_mese_mm(device_id):
+    """Solo mm WC (801), per confrontare in fretta."""
+    vals = _wc_evolution(device_id, "801")
+    recs = []
+    for ts, payload in (vals or {}).items():
+        try:
+            dt = datetime.fromtimestamp(int(ts)).date()
+            stats = ((payload or {}).get("801") or {}).get("stats") or {}
+            mm = stats.get("total")
+            if mm is None:
+                mm = stats.get("sum") or 0
+            recs.append({"date": pd.Timestamp(dt), "precip": float(mm or 0)})
+        except Exception:
+            continue
+    if not recs:
+        return None
+    return pd.DataFrame(recs).sort_values("date")
+
+
+@st.cache_data(ttl=3600)
 def wc_mese_pioggia(device_id):
     """Mese WC: mm (801) + T (101) + vento raffica (541/521, m/s → km/h)."""
     vals_r = _wc_evolution(device_id, "801")
@@ -1470,10 +1504,38 @@ def wc_mese_pioggia(device_id):
                 rec["vento_max"] = round(float(ms) * 3.6, 1)
         except Exception:
             continue
+    store = _carica_giorni_file()
+    did = str(_wc_id(device_id))
+    for dt, rec in list(by_day.items()):
+        key = f"wc:{did}|{dt.isoformat()}"
+        packed = {"date": dt.isoformat(), "precip": float(rec.get("precip") or 0)}
+        for k in ("t_max", "t_min", "t_med", "vento_max"):
+            if rec.get(k) is not None:
+                packed[k] = rec[k]
+        store[key] = packed
+    oggi = datetime.now().date()
+    for i in range(40):
+        d = oggi - timedelta(days=i)
+        key = f"wc:{did}|{d.isoformat()}"
+        if d in by_day or key not in store:
+            continue
+        old = store.get(key) or {}
+        rec = {"date": pd.Timestamp(d), "precip": float(old.get("precip") or 0)}
+        for k in ("t_max", "t_min", "t_med", "vento_max"):
+            if old.get(k) is not None:
+                rec[k] = float(old[k])
+        by_day[d] = rec
+    st.session_state["mn_giorni"] = store
+    try:
+        _salva_giorni_file()
+    except Exception:
+        pass
     if not by_day:
         return None
     df = pd.DataFrame(list(by_day.values()))
     df["date"] = pd.to_datetime(df["date"]).dt.normalize()
+    taglio = pd.Timestamp(oggi) - pd.Timedelta(days=30)
+    df = df[df["date"] >= taglio]
     return df.sort_values("date")
 
 
@@ -1961,8 +2023,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 if dkm <= RAGGIO_MN_BUONO:
                     candid.append((dkm, staz))
             candid.sort(key=lambda x: x[0])
-            for dkm, staz in candid[:5]:
-                df_c = wc_mese_pioggia(staz.get("id") or staz.get("code"))
+            for dkm, staz in candid[:1]:
+                df_c = wc_mese_mm(staz.get("id") or staz.get("code"))
                 if df_c is None or "precip" not in df_c.columns:
                     continue
                 mm_c = float(pd.to_numeric(df_c["precip"], errors="coerce").sum())
@@ -1993,12 +2055,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             altre = [x for x in vicine_vicine if x not in preferite]
             vicine_vicine = preferite + altre
         # WC fino a 10 km se MN è oltre 8 km dal bosco
-        pool = vicine_vicine
+        pool = vicine_vicine[:3]
         if pool:
             migliore = None
             df_wc = None
             for cand in pool:
-                df_c = wc_mese_pioggia(cand.get("id") or cand["code"])
+                df_c = wc_mese_mm(cand.get("id") or cand["code"])
                 mm_c = 0.0
                 n_c = 0
                 if df_c is not None and len(df_c) and "precip" in df_c.columns:
@@ -2009,7 +2071,9 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 if migliore is None or rank > migliore[0]:
                     migliore = (rank, cand, df_c, mm_c)
             s = migliore[1] if migliore else pool[0]
-            df_wc = migliore[2] if migliore else None
+            df_wc = wc_mese_pioggia(s.get("id") or s.get("code")) if s else None
+            if df_wc is None and migliore:
+                df_wc = migliore[2]
             oggi = wc_oggi(s.get("id") or s["code"])
             if df_wc is not None and len(df_wc):
                 df_mm = df_wc.copy()
@@ -2441,7 +2505,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     # FM: estivi 12-15 gg dopo l'ultima pioggia importante;
     # in faggeta (più fresca, pinophilus/edulis) un filo più lunga
-    if tipo_bosco == "faggio":
+    if tipo_bosco in ("faggio", "abete_bianco", "abete_rosso"):
         giorni_attesa = 15
     elif tipo_bosco == "castagno":
         giorni_attesa = 13
@@ -2615,9 +2679,15 @@ with st.sidebar:
     )
     tipi_sel = st.multiselect(
         "Tipo di bosco",
-        ["faggio", "castagno", "quercia"],
-        default=["faggio", "castagno", "quercia"],
-        format_func=lambda x: {"faggio": "Faggio", "castagno": "Castagno", "quercia": "Quercia"}[x],
+        ["faggio", "castagno", "quercia", "abete_bianco", "abete_rosso"],
+        default=["faggio", "castagno", "quercia", "abete_bianco", "abete_rosso"],
+        format_func=lambda x: {
+            "faggio": "Faggio",
+            "castagno": "Castagno",
+            "quercia": "Quercia",
+            "abete_bianco": "Abete bianco",
+            "abete_rosso": "Abete rosso",
+        }[x],
     )
     quota_range = st.slider("Quota (m)", 100, 1800, (150, 1700), step=50)
     cerca = st.text_input("Cerca zona (nome)", value="")
