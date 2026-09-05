@@ -905,6 +905,7 @@ def _push_giorni_github(store):
         tok = tok or str(__import__("os").environ.get("GITHUB_TOKEN") or "")
         repo = repo or str(__import__("os").environ.get("GITHUB_REPO") or "")
         if not tok or not repo or "/" not in repo:
+            st.session_state["mn_push_err"] = "manca GITHUB_TOKEN o GITHUB_REPO nei Secrets"
             return
         path = "mn_giorni_utente.json"
         api = f"https://api.github.com/repos/{repo}/contents/{path}"
@@ -930,8 +931,13 @@ def _push_giorni_github(store):
         if p.status_code in (200, 201):
             st.session_state["mn_push_ts"] = time.time()
             st.session_state["mn_push_ok"] = True
-    except Exception:
-        pass
+            st.session_state["mn_push_err"] = ""
+        else:
+            st.session_state["mn_push_ok"] = False
+            st.session_state["mn_push_err"] = f"GitHub HTTP {p.status_code}"
+    except Exception as e:
+        st.session_state["mn_push_ok"] = False
+        st.session_state["mn_push_err"] = str(e)[:80]
 
 
 def mn_giorno_pluviometro(token, code, giorno):
@@ -2769,14 +2775,10 @@ with st.sidebar:
     pioggia_max = st.slider("Pioggia massima ideale (mm / 30gg)", 60, 150, 100)
     max_km_stazione = 5.0
     _carica_giorni_file()
-    giorni_json = json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False)
-    st.download_button(
-        "Scarica piogge salvate (30-40 gg)",
-        data=giorni_json,
-        file_name="mn_giorni_utente.json",
-        mime="application/json",
-    )
-    st.caption("")
+    if st.session_state.get("mn_push_ok"):
+        st.caption("Archivio piogge su GitHub")
+    elif st.session_state.get("mn_push_err"):
+        st.caption(f"Archivio GitHub: {st.session_state.get('mn_push_err')}")
     st.markdown("---")
     if st.button("Esci", use_container_width=True):
         st.session_state["app_ok"] = False
