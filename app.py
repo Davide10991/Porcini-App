@@ -47,9 +47,10 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap');
     .stApp {
         background:
-            linear-gradient(180deg, rgba(18,12,8,.55) 0%, rgba(28,18,10,.50) 40%, rgba(12,18,10,.62) 100%),
+            linear-gradient(180deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,.28) 45%, rgba(0,0,0,.45) 100%),
             url('__SFONDO__')
-            center/cover fixed no-repeat;
+            center/contain fixed no-repeat,
+            #000;
     }
     .stApp::before {
         content: "🍄‍🟫";
