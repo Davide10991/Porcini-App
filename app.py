@@ -34,12 +34,25 @@ ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
 GUEST_PASS = "Porcino1"
 
-def _sfondo_url():
-    p = Path(__file__).resolve().parent / "sfondo_porcini.jpg"
+if "app_ok" not in st.session_state:
+    st.session_state["app_ok"] = False
+if "ruolo" not in st.session_state:
+    st.session_state["ruolo"] = "guest"
+
+
+def _sfondo_url(nome):
+    p = Path(__file__).resolve().parent / nome
     if p.exists():
         b64 = base64.b64encode(p.read_bytes()).decode("ascii")
         return f"data:image/jpeg;base64,{b64}"
     return ""
+
+
+_sfondo = (
+    _sfondo_url("sfondo_app.jpg")
+    if st.session_state.get("app_ok")
+    else _sfondo_url("sfondo_login.jpg")
+)
 
 st.markdown(
     """
@@ -47,10 +60,10 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap');
     .stApp {
         background:
-            linear-gradient(180deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,.28) 45%, rgba(0,0,0,.45) 100%),
+            linear-gradient(180deg, rgba(8,6,4,.42) 0%, rgba(8,6,4,.32) 45%, rgba(8,6,4,.50) 100%),
             url('__SFONDO__')
-            center/contain fixed no-repeat,
-            #000;
+            center/cover fixed no-repeat,
+            #1a140e;
     }
     .stApp::before {
         content: "🍄‍🟫";
@@ -126,7 +139,7 @@ st.markdown(
         text-align: center;
     }
     </style>
-    """.replace("__SFONDO__", _sfondo_url()),
+    """.replace("__SFONDO__", _sfondo),
     unsafe_allow_html=True,
 )
 
