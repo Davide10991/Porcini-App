@@ -25,7 +25,7 @@ except Exception:
 
 st.set_page_config(
     page_title="Porcini Predictor - Centro-Sud Italia",
-    page_icon="🍄‍🟫",
+    page_icon="sfondo_login.jpg",
     layout="wide",
     initial_sidebar_state="expanded",
 )
