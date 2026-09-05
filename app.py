@@ -79,14 +79,28 @@ st.markdown(
         0%,100% { transform: translateY(0) rotate(-6deg); }
         50% { transform: translateY(-14px) rotate(8deg); }
     }
-    h1, h2, h3 { font-family: 'Cormorant Garamond', serif !important; letter-spacing: .02em; }
+    h1, h2, h3 {
+        font-family: 'Cormorant Garamond', serif !important;
+        letter-spacing: .02em;
+        color: #fff8ee !important;
+        text-shadow: 0 2px 10px rgba(0,0,0,.85), 0 0 2px #000;
+    }
+    .stApp p, .stApp li, .stApp span, .stApp label, .stApp .stMarkdown {
+        color: #fff8ee !important;
+        text-shadow: 0 1px 6px rgba(0,0,0,.75);
+    }
     [data-testid="stHeader"] { background: transparent; }
     [data-testid="stSidebar"] {
-        background: rgba(20,14,8,.88) !important;
-        backdrop-filter: blur(10px);
-        border-right: 1px solid rgba(196,154,88,.25);
+        background: rgba(12,8,4,.94) !important;
+        backdrop-filter: blur(12px);
+        border-right: 1px solid rgba(196,154,88,.35);
     }
-    [data-testid="stSidebar"] * { color: #f3e6d0 !important; }
+    [data-testid="stSidebar"] * { color: #fff6e8 !important; text-shadow: none !important; }
+    [data-testid="stSidebar"] label, [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span, [data-testid="stSidebar"] .stMarkdown {
+        color: #fff6e8 !important;
+        font-weight: 600 !important;
+    }
     [data-testid="stSidebar"][aria-expanded="false"] {
         width: 0 !important;
         min-width: 0 !important;
