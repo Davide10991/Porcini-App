@@ -137,28 +137,20 @@ if "ruolo" not in st.session_state:
 if not st.session_state["app_ok"]:
     st.markdown(
         "<div class='login-card'><h1>🍄‍🟫 Porcini Predictor</h1>"
-        "<p>Scegli l'accesso.</p></div>",
+        "<p>Inserisci la password.</p></div>",
         unsafe_allow_html=True,
     )
-    modo = st.radio("Tipo accesso", ["Guest", "Amministratore"], horizontal=True)
-    user = ""
-    if modo == "Amministratore":
-        user = st.text_input("Username", placeholder="Username")
     pw = st.text_input("Password", type="password", placeholder="Password")
     if st.button("Entra nel bosco", type="primary", use_container_width=True):
-        if modo == "Amministratore" and user == ADMIN_USER and pw == ADMIN_PASS:
-            st.session_state["app_ok"] = True
-            st.session_state["ruolo"] = "admin"
-            st.rerun()
-        elif modo == "Guest" and pw == GUEST_PASS:
+        if pw == GUEST_PASS:
             st.session_state["app_ok"] = True
             st.session_state["ruolo"] = "guest"
             st.rerun()
         else:
-            st.error("Credenziali errate")
+            st.error("Password errata")
     st.stop()
 
-IS_ADMIN = st.session_state.get("ruolo") == "admin"
+IS_ADMIN = False
 
 # attesa pioggia (FM): faggio 15 | castagno 13 | quercia 12 — durata buttata 15-20 gg
 PUNTI = [
@@ -2459,7 +2451,20 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
         durata = max(7, round(durata * dur_clima))
         inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=giorni_attesa)
         fine = inizio + pd.Timedelta(days=durata)
+        # senza pioggia recente il terreno si asciuga: buttata chiusa
+        dopo = d[d["date"] >= pd.Timestamp(data_evt)]
+        ultima_umida = None
+        if len(dopo):
+            umide = dopo[dopo["precip"] >= 5]
+            if len(umide):
+                ultima_umida = pd.to_datetime(umide["date"].max()).normalize()
+        if ultima_umida is not None:
+            asciutto = int((oggi - ultima_umida).days)
+            if asciutto >= 10:
+                fine = min(fine, ultima_umida + pd.Timedelta(days=10))
         attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
+        if ultima_umida is not None and (oggi - ultima_umida).days >= 10:
+            attiva = False
         out.append({
             "pioggia_mm": round(float(mm), 1),
             "data_pioggia": pd.Timestamp(data_evt).date().isoformat(),
@@ -2774,7 +2779,7 @@ with st.sidebar:
         file_name="mn_giorni_utente.json",
         mime="application/json",
     )
-    st.caption("Amministratore" if IS_ADMIN else "Guest")
+    st.caption("")
     st.markdown("---")
     if st.button("Esci", use_container_width=True):
         st.session_state["app_ok"] = False
