@@ -2798,23 +2798,30 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("⚙️ Filtri e regole")
-    regioni_sel = st.multiselect(
-        "Regioni da calcolare",
-        ["Abruzzo", "Molise", "Lazio", "Campania"],
-        default=["Molise"],
-    )
-    tipi_sel = st.multiselect(
-        "Tipo di bosco",
-        ["faggio", "castagno", "quercia", "abete_bianco", "abete_rosso"],
-        default=["faggio", "castagno", "quercia", "abete_bianco", "abete_rosso"],
-        format_func=lambda x: {
-            "faggio": "Faggio",
-            "castagno": "Castagno",
-            "quercia": "Quercia",
-            "abete_bianco": "Abete bianco",
-            "abete_rosso": "Abete rosso",
-        }[x],
-    )
+    st.markdown("**Regioni da calcolare**")
+    c1, c2 = st.columns(2)
+    with c1:
+        r_abr = st.checkbox("Abruzzo", value=False)
+        r_mol = st.checkbox("Molise", value=True)
+    with c2:
+        r_laz = st.checkbox("Lazio", value=False)
+        r_cam = st.checkbox("Campania", value=False)
+    regioni_sel = [n for n, on in (
+        ("Abruzzo", r_abr), ("Molise", r_mol), ("Lazio", r_laz), ("Campania", r_cam)
+    ) if on]
+    st.markdown("**Tipo di bosco**")
+    t1, t2 = st.columns(2)
+    with t1:
+        t_fag = st.checkbox("Faggio", value=True)
+        t_cas = st.checkbox("Castagno", value=True)
+        t_que = st.checkbox("Quercia", value=True)
+    with t2:
+        t_ab = st.checkbox("Abete bianco", value=True)
+        t_ar = st.checkbox("Abete rosso", value=True)
+    tipi_sel = [k for k, on in (
+        ("faggio", t_fag), ("castagno", t_cas), ("quercia", t_que),
+        ("abete_bianco", t_ab), ("abete_rosso", t_ar),
+    ) if on]
     quota_range = st.slider("Quota (m)", 100, 1800, (150, 1700), step=50)
     cerca = st.text_input("Cerca zona (nome)", value="")
 
