@@ -123,6 +123,26 @@ st.markdown(
         transition: transform .15s ease, box-shadow .15s ease;
     }
     .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+    [data-testid="stSidebar"] button {
+        color: #1a1208 !important;
+        background-color: #fff3e0 !important;
+        border: 1px solid #c49a58 !important;
+    }
+    [data-testid="stSidebar"] button p,
+    [data-testid="stSidebar"] button span,
+    [data-testid="stSidebar"] button div {
+        color: #1a1208 !important;
+    }
+    [data-testid="stSidebar"] button[kind="primary"] {
+        color: #ffffff !important;
+        background-color: #c44536 !important;
+        border: none !important;
+    }
+    [data-testid="stSidebar"] button[kind="primary"] p,
+    [data-testid="stSidebar"] button[kind="primary"] span,
+    [data-testid="stSidebar"] button[kind="primary"] div {
+        color: #ffffff !important;
+    }
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     .stDeployButton {display: none !important;}
