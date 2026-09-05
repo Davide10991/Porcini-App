@@ -867,21 +867,22 @@ def _carica_giorni_file():
             st.session_state["mn_giorni_file_ok"] = True
         except Exception:
             pass
+        _salva_giorni_file()
     return store
 
 
 def _salva_giorni_file():
-    """Tengo gli ultimi 40 giorni: quando MN azzera il mese nuovo non perdiamo i 30 precedenti."""
+    """Archivio rotante: tengo 31 giorni, cancello tutto ciò che è più vecchio di un mese."""
     try:
         store = dict(st.session_state.get("mn_giorni") or {})
-        limite = (datetime.now().date() - timedelta(days=40)).isoformat()
+        limite = (datetime.now().date() - timedelta(days=31)).isoformat()
         pulito = {}
         for k, v in store.items():
             d = ""
             if isinstance(v, dict):
-                d = str(v.get("date") or "")
+                d = str(v.get("date") or "")[:10]
             if not d and "|" in str(k):
-                d = str(k).split("|", 1)[-1]
+                d = str(k).rsplit("|", 1)[-1][:10]
             if d >= limite:
                 pulito[k] = v
         st.session_state["mn_giorni"] = pulito
@@ -889,6 +890,54 @@ def _salva_giorni_file():
             json.dumps(pulito, ensure_ascii=False),
             encoding="utf-8",
         )
+        _push_giorni_github(pulito)
+    except Exception:
+        pass
+
+
+def _push_giorni_github(store):
+    """Se nei Secrets c'è GITHUB_TOKEN, aggiorna mn_giorni_utente.json sul repo."""
+    try:
+        last = float(st.session_state.get("mn_push_ts") or 0)
+        if time.time() - last < 90:
+            return
+        tok = ""
+        repo = ""
+        branch = "main"
+        try:
+            tok = str(st.secrets.get("GITHUB_TOKEN") or "")
+            repo = str(st.secrets.get("GITHUB_REPO") or "")
+            branch = str(st.secrets.get("GITHUB_BRANCH") or "main")
+        except Exception:
+            pass
+        tok = tok or str(__import__("os").environ.get("GITHUB_TOKEN") or "")
+        repo = repo or str(__import__("os").environ.get("GITHUB_REPO") or "")
+        if not tok or not repo or "/" not in repo:
+            return
+        path = "mn_giorni_utente.json"
+        api = f"https://api.github.com/repos/{repo}/contents/{path}"
+        headers = {
+            "Authorization": f"Bearer {tok}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "PorciniPredictor",
+        }
+        sha = None
+        r = requests.get(api, headers=headers, params={"ref": branch}, timeout=20)
+        if r.status_code == 200:
+            sha = (r.json() or {}).get("sha")
+        body = {
+            "message": f"archivio piogge {datetime.now().date().isoformat()}",
+            "content": base64.b64encode(
+                json.dumps(store, ensure_ascii=False).encode("utf-8")
+            ).decode("ascii"),
+            "branch": branch,
+        }
+        if sha:
+            body["sha"] = sha
+        p = requests.put(api, headers=headers, json=body, timeout=25)
+        if p.status_code in (200, 201):
+            st.session_state["mn_push_ts"] = time.time()
+            st.session_state["mn_push_ok"] = True
     except Exception:
         pass
 
@@ -1898,6 +1947,30 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return None
         return round(float(df["precip"].sum(skipna=True)), 1)
 
+    def _giorni_lista(df):
+        """Giorni umidi + ultimi 8 giorni anche se a 0, così settembre si vede."""
+        out = []
+        if df is None or len(df) == 0 or "precip" not in df.columns:
+            return out
+        d = df.copy()
+        d["date"] = pd.to_datetime(d["date"]).dt.normalize()
+        d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0)
+        oggi = pd.Timestamp(datetime.now().date())
+        visti = set()
+        for _, rr in d.sort_values("date").iterrows():
+            dt = pd.to_datetime(rr["date"]).normalize()
+            mm = float(rr["precip"] or 0)
+            recenti = (oggi - dt).days <= 8
+            if mm >= 0.2 or recenti:
+                out.append(f"{dt.date()}: {mm:.1f} mm")
+                visti.add(dt)
+        for i in range(8):
+            dt = oggi - pd.Timedelta(days=i)
+            if dt not in visti:
+                out.append(f"{dt.date()}: 0.0 mm")
+        out.sort()
+        return out
+
     # Caput Frigoris (Valle Castellana / Rocca Santa Maria)
     nome_l = (nome_zona or "").lower()
     cf_id = None
@@ -2086,11 +2159,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                             df_mm.loc[mask, "precip"] = float(oggi["rain"])
                     except Exception:
                         pass
-                giorni_txt = [
-                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                    for _, rr in df_mm.dropna(subset=["date"]).sort_values("date").iterrows()
-                    if float(rr["precip"]) >= 0.2
-                ]
+                giorni_txt = _giorni_lista(df_mm)
                 n_pluvio = int(df_mm["precip"].notna().sum())
                 if storico_om is not None:
                     serie = storico_om.copy()
@@ -2202,10 +2271,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
                 df_mn30 = df_mn[df_mn["date"] >= taglio].copy()
                 serie = df_mn30
+                oggi_d = pd.Timestamp(datetime.now().date())
                 if s.get("oggi_mm") is not None:
-                    oggi_d = pd.Timestamp(datetime.now().date())
                     if (serie["date"] == oggi_d).any():
                         serie.loc[serie["date"] == oggi_d, "precip"] = s["oggi_mm"]
+                    else:
+                        extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
+                        serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
             n_gg = int(df_mn["precip"].notna().sum()) if df_mn is not None and len(df_mn) else 0
             fonte = (
                 f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
@@ -2213,13 +2285,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
             )
             info = _info_stazione(s, fonte)
-            info["giorni_pluviometro"] = []
+            info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
             if serie is not None and len(serie):
-                for _, rr in serie.dropna(subset=["date"]).sort_values("date").iterrows():
-                    if float(rr.get("precip") or 0) >= 0.2:
-                        info["giorni_pluviometro"].append(
-                            f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                        )
                 info["pioggia_stazione_30g"] = _mm(serie)
                 if "vento_max" in serie.columns:
                     vento = riepilogo_vento(serie)
