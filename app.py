@@ -2767,10 +2767,7 @@ with st.sidebar:
     st.markdown("---")
     pioggia_min = st.slider("Pioggia minima ideale (mm / 30gg)", 20, 80, 40)
     pioggia_max = st.slider("Pioggia massima ideale (mm / 30gg)", 60, 150, 100)
-    max_km_stazione = st.slider(
-        "Distanza max stazione (km)",
-        10, 60, 35, 5,
-    )
+    max_km_stazione = 5.0
     _carica_giorni_file()
     giorni_json = json.dumps(st.session_state.get("mn_giorni") or {}, ensure_ascii=False)
     st.download_button(
