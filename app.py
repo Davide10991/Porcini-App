@@ -2443,6 +2443,95 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     return None, info, forecast, soil, vento
 
 
+def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
+    """4 specie da FunghiMagazine: albero + quota + mese + caldo."""
+    if mese is None:
+        mese = datetime.now().month
+    tipo = (tipo_bosco or "").lower()
+    q = float(quota or 1000)
+    t = float(t_max_media or 20)
+
+    # alberi: chi può uscire in quel bosco (articolo FM)
+    base = {
+        "faggio": ["estatino", "edulis", "pinicola"],
+        "castagno": ["estatino", "edulis", "pinicola", "aereus"],
+        "quercia": ["estatino", "aereus", "edulis"],
+        "abete_bianco": ["pinicola", "edulis", "estatino"],
+        "abete_rosso": ["pinicola", "edulis"],
+    }
+    possibili = list(base.get(tipo, ["estatino", "edulis"]))
+    # Centro-Sud: aereus su quercia/castagno, non in faggeta
+    if tipo == "quercia" and t < 18:
+        if "pinicola" not in possibili:
+            possibili.append("pinicola")
+
+    # stagione
+    if mese in (3, 4, 5):
+        stagione = {"estatino": 3, "pinicola": 3, "aereus": 1, "edulis": 1}
+    elif mese in (6, 7, 8):
+        stagione = {"aereus": 3, "estatino": 3, "edulis": 1, "pinicola": 1}
+    elif mese == 9:
+        stagione = {"estatino": 3, "edulis": 2, "aereus": 2, "pinicola": 2}
+    elif mese in (10, 11):
+        stagione = {"edulis": 3, "pinicola": 3, "estatino": 1, "aereus": 1}
+    else:
+        stagione = {"edulis": 2, "pinicola": 2, "estatino": 0, "aereus": 0}
+
+    # clima: estatino/aereus amano il caldo; edulis/pinicola il fresco
+    clima = {"estatino": 0, "aereus": 0, "edulis": 0, "pinicola": 0}
+    if t >= 26:
+        clima["aereus"] += 2
+        clima["estatino"] += 2
+        clima["edulis"] -= 1
+        clima["pinicola"] -= 2
+    elif t >= 22:
+        clima["estatino"] += 2
+        clima["aereus"] += 1
+    elif 16 <= t <= 22:
+        clima["edulis"] += 2
+        clima["pinicola"] += 1
+        clima["estatino"] += 1
+    else:
+        clima["pinicola"] += 2
+        clima["edulis"] += 1
+        clima["aereus"] -= 2
+        clima["estatino"] -= 1
+    if q >= 1200 and mese in (6, 7, 8, 9):
+        clima["estatino"] += 2
+        clima["edulis"] += 1
+        clima["pinicola"] += 1
+    elif q >= 1400:
+        clima["pinicola"] += 2
+        clima["edulis"] += 1
+        clima["aereus"] -= 1
+    elif q <= 600:
+        clima["aereus"] += 1
+        if mese in (6, 7, 8):
+            clima["estatino"] -= 1
+        else:
+            clima["estatino"] += 1
+        clima["pinicola"] -= 1
+
+    nomi = {
+        "estatino": "Estatino (B. reticulatus)",
+        "aereus": "Nero / bronzino (B. aereus)",
+        "edulis": "Chiaro tardivo (B. edulis)",
+        "pinicola": "Pinicola (B. pinophilus)",
+    }
+    out = []
+    for sp in possibili:
+        punti = stagione.get(sp, 0) + clima.get(sp, 0)
+        if punti >= 4:
+            stato = "probabile"
+        elif punti >= 2:
+            stato = "possibile"
+        else:
+            stato = "fuori stagione"
+        out.append({"id": sp, "nome": nomi[sp], "stato": stato, "punti": punti})
+    out.sort(key=lambda x: -x["punti"])
+    return out
+
+
 def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
     """Buttata secondo FunghiMagazine: nasce 12-15 gg dopo pioggia importante,
     dura in media 15 gg, 15-20 se condizioni buone, fino a ~30 se ideali
@@ -2631,7 +2720,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     # FM: estivi 12-15 gg dopo l'ultima pioggia importante;
     # in faggeta (più fresca, pinophilus/edulis) un filo più lunga
-    if tipo_bosco in ("faggio", "abete_bianco", "abete_rosso"):
+    specie = specie_porcini(tipo_bosco, quota, t_max_media)
+    top_sp = next((s for s in specie if s["stato"] != "fuori stagione"), specie[0] if specie else None)
+    # FM: estatino/aereus più rapidi dopo i tepori; edulis/pinicola dopo piogge fresche
+    if top_sp and top_sp["id"] in ("estatino", "aereus"):
+        giorni_attesa = 12
+    elif tipo_bosco in ("faggio", "abete_bianco", "abete_rosso"):
         giorni_attesa = 15
     elif tipo_bosco == "castagno":
         giorni_attesa = 13
@@ -2682,6 +2776,10 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
             consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova spugnata"
     else:
         consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
+    attese = [s for s in specie if s["stato"] in ("probabile", "possibile")]
+    if attese:
+        txt_sp = ", ".join(f"{s['nome']} ({s['stato']})" for s in attese[:3])
+        consiglio = f"Specie: {txt_sp} · " + consiglio
     if fattore_v < 0.5:
         consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
 
@@ -2705,6 +2803,10 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "nota_vento": vento.get("nota_vento"),
         "buttate": buttate,
         "buttate_attive": len(attive),
+        "specie": specie,
+        "specie_testo": ", ".join(
+            f"{s['nome']} ({s['stato']})" for s in specie if s["stato"] != "fuori stagione"
+        ) or "nessuna in stagione",
     }
 
     # senza buttata aperta non è verde, anche con 60 mm a inizio mese
@@ -2972,6 +3074,7 @@ with col1:
             Regione: {r['regione']}<br>
             Tipo: {r['tipo']}<br>
             Quota ~{r['quota']} m<br>
+            Specie: {d.get('specie_testo', 'n/d')}<br>
             <b>Punteggio: {r['score']:.0f}/100</b><br>
             {r['livello']}<br>
             {d.get('consiglio', '')}<br>
@@ -3004,6 +3107,7 @@ with col2:
             st.markdown(f"**{r['livello']}**")
             st.write(f"Tipo bosco: **{r['tipo']}** | Quota ~{r['quota']} m")
             d = r["dettaglio"]
+            st.write(f"Specie attese: **{d.get('specie_testo', 'n/d')}**")
             st.info(d.get("consiglio", ""))
             st.write(f"• Pioggia ultimi 30 giorni: **{d.get('precip_totale_30g')} mm** ({d.get('giorni_con_pioggia')} giorni con pioggia)")
             st.write(f"• Pioggia ultimi 10 giorni: **{d.get('precip_10g')} mm**")
