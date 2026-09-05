@@ -1793,6 +1793,42 @@ CAPUT_FRIGORIS = {
     "ceppo": "TE106",
 }
 
+# stazioni CF Abruzzo con coordinate (descrizione.php + paesi)
+CF_STAZIONI = [
+    {"id": "AQ081", "nome": "Campo Imperatore Giardino Botanico", "lat": 42.4438, "lon": 13.5583},
+    {"id": "AQ010", "nome": "Campo Felice", "lat": 42.2124, "lon": 13.4575},
+    {"id": "AQ071", "nome": "Rocca di Cambio", "lat": 42.2367, "lon": 13.4890},
+    {"id": "AQ059", "nome": "Ovindoli", "lat": 42.1390, "lon": 13.5230},
+    {"id": "AQ024", "nome": "Rocca di Mezzo Rovere", "lat": 42.1634, "lon": 13.5180},
+    {"id": "AQ023", "nome": "Fonteavignone", "lat": 42.2000, "lon": 13.5100},
+    {"id": "AQ014", "nome": "Pescasseroli", "lat": 41.8080, "lon": 13.7890},
+    {"id": "AQ012", "nome": "Rifugio Fioretti", "lat": 42.4550, "lon": 13.5550},
+    {"id": "AQ021", "nome": "Piani di Pezza", "lat": 42.1750, "lon": 13.4600},
+    {"id": "AQ020", "nome": "Altopiano delle Cinque Miglia", "lat": 41.8700, "lon": 14.0500},
+    {"id": "AQ030", "nome": "Monte Genzana", "lat": 41.9510, "lon": 13.8840},
+    {"id": "AQ035", "nome": "Scanno Pineta", "lat": 41.9040, "lon": 13.8790},
+    {"id": "AQ124", "nome": "Villetta Barrea", "lat": 41.7760, "lon": 13.9230},
+    {"id": "AQ015", "nome": "Rifugio Montecristo", "lat": 41.8600, "lon": 13.9800},
+    {"id": "AQ077", "nome": "Capestrano", "lat": 42.2680, "lon": 13.7670},
+    {"id": "TE080", "nome": "Valle Castellana", "lat": 42.7350, "lon": 13.4970},
+    {"id": "TE106", "nome": "Il Ceppo", "lat": 42.6650, "lon": 13.4780},
+    {"id": "TE013", "nome": "Rifugio Franchetti", "lat": 42.4700, "lon": 13.5650},
+    {"id": "TE127", "nome": "Poggio Umbricchio", "lat": 42.5800, "lon": 13.5200},
+    {"id": "CH003", "nome": "Guardiagrele", "lat": 42.1900, "lon": 14.2210},
+    {"id": "PE111", "nome": "Farindola", "lat": 42.4430, "lon": 13.8220},
+    {"id": "PE079", "nome": "Popoli", "lat": 42.1740, "lon": 13.8320},
+    {"id": "PE078", "nome": "Bussi sul Tirino", "lat": 42.2130, "lon": 13.8250},
+]
+
+
+def cf_stazione_vicina(lat, lon, max_km=5.0):
+    migliore = None
+    for s in CF_STAZIONI:
+        d = distanza_km(lat, lon, s["lat"], s["lon"])
+        if d <= max_km and (migliore is None or d < migliore["distanza_km"]):
+            migliore = {**s, "distanza_km": round(d, 1)}
+    return migliore
+
 
 @st.cache_data(ttl=1800)
 def cf_scheda(station_id):
@@ -2017,13 +2053,18 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         out.sort()
         return out
 
-    # Caput Frigoris (Valle Castellana / Rocca Santa Maria)
+    # Caput Frigoris: nome zona oppure stazione entro 5 km
     nome_l = (nome_zona or "").lower()
     cf_id = None
+    cf_meta = None
     for chiave, sid in CAPUT_FRIGORIS.items():
         if chiave in nome_l:
             cf_id = sid
             break
+    if not cf_id:
+        cf_meta = cf_stazione_vicina(lat, lon, max_km=5.0)
+        if cf_meta:
+            cf_id = cf_meta["id"]
     if cf_id:
         cf = cf_scheda(cf_id) or {"nome": cf_id, "oggi_mm": None, "mese_mm": None, "anno_mm": None}
         store = _carica_giorni_file()
@@ -2063,7 +2104,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 + " · agosto da archivio locale"
             ),
             "stazione": cf.get("nome") or cf_id,
-            "distanza_km": 0,
+            "distanza_km": (cf_meta or {}).get("distanza_km") or 0,
             "pioggia_stazione_30g": _mm(df_cf),
             "giorni_pluviometro": giorni or [
                 f"oggi: {cf.get('oggi_mm')} mm",
@@ -2931,7 +2972,7 @@ with st.sidebar:
         ("faggio", t_fag), ("castagno", t_cas), ("quercia", t_que),
         ("abete_bianco", t_ab), ("abete_rosso", t_ar),
     ) if on]
-    quota_range = st.slider("Quota (m)", 100, 1800, (150, 1700), step=50)
+    quota_range = st.slider("Quota (m)", 100, 1800, (100, 1800), step=50)
     cerca = st.text_input("Cerca zona (nome)", value="")
 
     st.markdown("---")
