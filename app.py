@@ -1199,6 +1199,9 @@ def riepilogo_vento(df, giorni=10):
         "giorni_consecutivi_venti": 0,
         "fattore_vento": 1.0,
         "nota_vento": "Vento non disponibile",
+        "picchi_vento": [],
+        "picco_max_data": None,
+        "picco_max_kmh": None,
     }
     if df is None or "vento_max" not in getattr(df, "columns", []):
         return vuoto
@@ -1234,6 +1237,27 @@ def riepilogo_vento(df, giorni=10):
         nota = "Vento forte e ripetuto: nascite fortemente ridotte"
     else:
         nota = "Vento persistente >20–30 km/h: umidità quasi azzerata"
+    picchi = []
+    picco_data = None
+    picco_kmh = None
+    try:
+        serie = df.copy()
+        serie["date"] = pd.to_datetime(serie["date"], errors="coerce")
+        serie["vento_max"] = pd.to_numeric(serie["vento_max"], errors="coerce")
+        serie = serie.dropna(subset=["date", "vento_max"])
+        taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+        serie = serie[serie["date"] >= taglio]
+        forti = serie[serie["vento_max"] >= 20].sort_values("date")
+        for _, rr in forti.iterrows():
+            picchi.append(
+                f"{pd.to_datetime(rr['date']).date()}: {float(rr['vento_max']):.1f} km/h"
+            )
+        if len(serie):
+            top = serie.loc[serie["vento_max"].idxmax()]
+            picco_data = pd.to_datetime(top["date"]).date().isoformat()
+            picco_kmh = round(float(top["vento_max"]), 1)
+    except Exception:
+        pass
     return {
         "vento_medio_10g": round(media, 1),
         "vento_max_10g": round(vmax, 1),
@@ -1242,6 +1266,9 @@ def riepilogo_vento(df, giorni=10):
         "giorni_consecutivi_venti": streak,
         "fattore_vento": round(fattore, 3),
         "nota_vento": nota,
+        "picchi_vento": picchi,
+        "picco_max_data": picco_data,
+        "picco_max_kmh": picco_kmh,
     }
 
 
@@ -2842,6 +2869,9 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "giorni_vento_consecutivi": vento.get("giorni_consecutivi_venti"),
         "fattore_vento": vento.get("fattore_vento"),
         "nota_vento": vento.get("nota_vento"),
+        "picchi_vento": vento.get("picchi_vento") or [],
+        "picco_max_data": vento.get("picco_max_data"),
+        "picco_max_kmh": vento.get("picco_max_kmh"),
         "buttate": buttate,
         "buttate_attive": len(attive),
         "specie": specie,
@@ -3122,6 +3152,8 @@ with col1:
             <b>Pioggia ultimo mese: {tot_txt}</b><br>
             T max: {d.get('t_max_media', 'n/d')} °C · T med: {d.get('t_med_media', 'n/d')} °C · T min: {d.get('t_min_media', 'n/d')} °C<br>
             Vento 10gg: max {d.get('vento_max_10g', 'n/d')} km/h · {d.get('nota_vento', '')}<br>
+            Picco: {d.get('picco_max_data') or 'n/d'} {('('+str(d.get('picco_max_kmh'))+' km/h)') if d.get('picco_max_kmh') is not None else ''}<br>
+            Giorni vento ≥20: {('<br>' + '<br>'.join(d.get('picchi_vento') or [])) if d.get('picchi_vento') else ' nessuno'}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
@@ -3163,6 +3195,13 @@ with col2:
                 f"streak {d.get('giorni_vento_consecutivi')})"
             )
             st.write(f"• Fattore vento (1=ok, ~0=letto secco): **{d.get('fattore_vento')}** — {d.get('nota_vento')}")
+            if d.get("picco_max_data"):
+                st.write(f"• Picco vento: **{d.get('picco_max_kmh')} km/h** il **{d.get('picco_max_data')}**")
+            picchi = d.get("picchi_vento") or []
+            if picchi:
+                st.write("• Giorni con vento ≥20 km/h:")
+                for p in picchi:
+                    st.write(f"  – {p}")
             meteo = r.get("meteo", {})
             dist = meteo.get("distanza_km")
             dist_txt = f" ({dist} km)" if dist is not None else ""
