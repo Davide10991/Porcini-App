@@ -2318,13 +2318,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     cat_mn = mn_catalogo_pubblico()
     if cat_mn:
         vicine_pub = []
-        for staz in cat_mn:
-            dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-            if dkm <= RAGGIO_MN_BUONO:
-                s2 = dict(staz)
-                s2["distanza_km"] = round(dkm, 1)
-                vicine_pub.append(s2)
-        vicine_pub.sort(key=lambda x: x["distanza_km"])
+        nome_l0 = (nome_zona or "").lower()
+        if "amatrice" in nome_l0:
+            for staz in cat_mn:
+                nn = (staz.get("nome") or "").lower()
+                if "bagnolo" in nn or "amatrice" in nn:
+                    dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
+                    if dkm <= 20:
+                        s2 = dict(staz)
+                        s2["distanza_km"] = round(dkm, 1)
+                        vicine_pub.append(s2)
+            vicine_pub.sort(key=lambda x: (0 if "bagnolo" in (x.get("nome") or "").lower() else 1, x["distanza_km"]))
+        if not vicine_pub:
+            for staz in cat_mn:
+                dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
+                if dkm <= RAGGIO_MN_BUONO:
+                    s2 = dict(staz)
+                    s2["distanza_km"] = round(dkm, 1)
+                    vicine_pub.append(s2)
+            vicine_pub.sort(key=lambda x: x["distanza_km"])
         if not vicine_pub and cat_mn:
             nome_l = (nome_zona or "").lower()
             chiavi = [w for w in re.split(r"[^a-zàèéìòù]+", nome_l) if len(w) >= 5]
@@ -3020,10 +3032,6 @@ with st.sidebar:
         st.session_state["ruolo"] = "guest"
         st.rerun()
     calcola = st.button("🍄‍🟫 Calcola / aggiorna dati", type="primary", use_container_width=True)
-    if st.button("Svuota cache meteo", use_container_width=True):
-        st.cache_data.clear()
-        st.session_state.pop("risultati", None)
-        st.success("Cache svuotata")
 
 regole = {"pioggia_min": pioggia_min, "pioggia_max": pioggia_max}
 mn_token = ""
