@@ -896,6 +896,19 @@ def _path_giorni_salvati():
     return Path(__file__).resolve().parent / "mn_giorni_utente.json"
 
 
+# Agosto 2026 Bagnolo Amatrice (laz201) da tabella FM / pluviometro
+SEED_LAZ201_AGO2026 = {
+    "2026-08-01": 0.0, "2026-08-02": 0.0, "2026-08-03": 0.0, "2026-08-04": 0.51,
+    "2026-08-05": 0.0, "2026-08-06": 0.0, "2026-08-07": 0.0, "2026-08-08": 0.0,
+    "2026-08-09": 0.0, "2026-08-10": 0.0, "2026-08-11": 1.52, "2026-08-12": 0.0,
+    "2026-08-13": 0.0, "2026-08-14": 0.0, "2026-08-15": 0.0, "2026-08-16": 4.06,
+    "2026-08-17": 2.03, "2026-08-18": 0.0, "2026-08-19": 0.0, "2026-08-20": 0.0,
+    "2026-08-21": 6.60, "2026-08-22": 0.0, "2026-08-23": 0.0, "2026-08-24": 0.0,
+    "2026-08-25": 3.30, "2026-08-26": 0.0, "2026-08-27": 0.0, "2026-08-28": 4.32,
+    "2026-08-29": 0.25, "2026-08-30": 0.0, "2026-08-31": 0.0,
+}
+
+
 def _carica_giorni_file():
     store = st.session_state.setdefault("mn_giorni", {})
     path = _path_giorni_salvati()
@@ -907,6 +920,14 @@ def _carica_giorni_file():
             st.session_state["mn_giorni_file_ok"] = True
         except Exception:
             pass
+        _salva_giorni_file()
+    if not st.session_state.get("seed_laz201_ok"):
+        for giorno, mm in SEED_LAZ201_AGO2026.items():
+            chiave = f"laz201|{giorno}"
+            if chiave not in store:
+                store[chiave] = {"date": giorno, "precip": mm}
+        st.session_state["mn_giorni"] = store
+        st.session_state["seed_laz201_ok"] = True
         _salva_giorni_file()
     return store
 
@@ -2320,7 +2341,16 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vicine_pub = []
         nome_l0 = (nome_zona or "").lower()
         if "amatrice" in nome_l0:
+            vicine_pub.append({
+                "code": "laz201",
+                "nome": "Amatrice - BAGNOLO",
+                "lat": 42.630707,
+                "lon": 13.232802,
+                "distanza_km": round(distanza_km(lat, lon, 42.630707, 13.232802), 1),
+            })
             for staz in cat_mn:
+                if str(staz.get("code") or "").lower() == "laz201":
+                    continue
                 nn = (staz.get("nome") or "").lower()
                 if "bagnolo" in nn or "amatrice" in nn:
                     dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
@@ -2328,7 +2358,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                         s2 = dict(staz)
                         s2["distanza_km"] = round(dkm, 1)
                         vicine_pub.append(s2)
-            vicine_pub.sort(key=lambda x: (0 if "bagnolo" in (x.get("nome") or "").lower() else 1, x["distanza_km"]))
+            vicine_pub.sort(key=lambda x: (0 if "laz201" == str(x.get("code") or "").lower() else 1, x["distanza_km"]))
         if not vicine_pub:
             for staz in cat_mn:
                 dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
@@ -2367,29 +2397,35 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 or str(s.get("code") or "").lower() in {"mls052", "mls064"}
             ):
                 s = prefer["mls071"]
-            df_mn = mn_archivio_pubblico(s["code"], 2)
+            mesi_arch = 3 if str(s.get("code") or "").lower() == "laz201" else 2
+            df_mn = mn_archivio_pubblico(s["code"], mesi_arch)
             if df_mn is None and mn_token:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            if df_mn is None:
-                store = _carica_giorni_file()
-                recs = []
-                pref = str(s.get("code") or "").lower() + "|"
-                for k, v in (store or {}).items():
-                    if not str(k).lower().startswith(pref):
-                        continue
-                    try:
-                        rec = {
-                            "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
-                            "precip": float((v or {}).get("precip") or 0),
-                        }
-                        for kk in ("t_max", "t_min", "t_med", "vento_max"):
-                            if v and v.get(kk) is not None:
-                                rec[kk] = float(v[kk])
-                        recs.append(rec)
-                    except Exception:
-                        pass
-                if recs:
-                    df_mn = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+            store = _carica_giorni_file()
+            recs = []
+            pref = str(s.get("code") or "").lower() + "|"
+            for k, v in (store or {}).items():
+                if not str(k).lower().startswith(pref):
+                    continue
+                try:
+                    rec = {
+                        "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
+                        "precip": float((v or {}).get("precip") or 0),
+                    }
+                    for kk in ("t_max", "t_min", "t_med", "vento_max"):
+                        if v and v.get(kk) is not None:
+                            rec[kk] = float(v[kk])
+                    recs.append(rec)
+                except Exception:
+                    pass
+            if recs:
+                df_store = pd.DataFrame(recs)
+                if df_mn is None or not len(df_mn):
+                    df_mn = df_store
+                else:
+                    df_mn = pd.concat([df_store, df_mn], ignore_index=True)
+                df_mn["date"] = pd.to_datetime(df_mn["date"], errors="coerce")
+                df_mn = df_mn.dropna(subset=["date"]).drop_duplicates("date", keep="last").sort_values("date")
             serie = None
             if df_mn is not None and len(df_mn):
                 df_mn = df_mn.copy()
@@ -2725,7 +2761,7 @@ def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
 
 
 def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None):
-    if df is None or len(df) < 8:
+    if df is None or len(df) < 5:
         return 0, "Dati insufficienti", {}
 
     precip_totale = float(df["precip"].sum())
