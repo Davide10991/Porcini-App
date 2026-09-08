@@ -70,17 +70,23 @@ st.markdown(
     }
     .stApp::before {
         content: "🍄‍🟫";
-        position: fixed; left: 4%; bottom: 6%; font-size: 3.2rem;
-        animation: floaty 6s ease-in-out infinite; opacity: .35; z-index: 0; pointer-events: none;
+        position: fixed; left: 3%; bottom: 7%; font-size: 3.6rem;
+        animation: floaty 6s ease-in-out infinite; opacity: .55; z-index: 2; pointer-events: none;
+        filter: drop-shadow(0 8px 12px rgba(0,0,0,.35));
     }
     .stApp::after {
         content: "🍄‍🟫";
-        position: fixed; right: 6%; top: 12%; font-size: 2.4rem;
-        animation: floaty 7.5s ease-in-out infinite reverse; opacity: .28; z-index: 0; pointer-events: none;
+        position: fixed; right: 5%; top: 11%; font-size: 2.7rem;
+        animation: floaty 7.5s ease-in-out infinite reverse; opacity: .48; z-index: 2; pointer-events: none;
+        filter: drop-shadow(0 8px 12px rgba(0,0,0,.35));
     }
+    .fungo-float { position: fixed; z-index: 2; pointer-events: none; filter: drop-shadow(0 6px 10px rgba(0,0,0,.3)); }
+    .fungo-a { left: 18%; top: 22%; font-size: 1.8rem; animation: floaty 8s ease-in-out infinite; opacity: .42; }
+    .fungo-b { right: 16%; bottom: 18%; font-size: 2.2rem; animation: floaty 5.5s ease-in-out infinite reverse; opacity: .4; }
+    .fungo-c { left: 46%; bottom: 8%; font-size: 1.6rem; animation: floaty 9s ease-in-out infinite; opacity: .32; }
     @keyframes floaty {
         0%,100% { transform: translateY(0) rotate(-6deg); }
-        50% { transform: translateY(-14px) rotate(8deg); }
+        50% { transform: translateY(-16px) rotate(8deg); }
     }
     h1, h2, h3 {
         font-family: 'Cormorant Garamond', serif !important;
@@ -93,7 +99,6 @@ st.markdown(
         text-shadow: 0 1px 8px rgba(0,0,0,.55);
     }
     [data-testid="stHeader"] { background: transparent; }
-    [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, rgba(14,18,14,.96), rgba(10,12,10,.92)) !important;
         backdrop-filter: blur(18px);
@@ -106,14 +111,7 @@ st.markdown(
         color: #f6edd9 !important;
         font-weight: 500 !important;
     }
-    [data-testid="stSidebar"][aria-expanded="false"] {
-        width: 0 !important;
-        min-width: 0 !important;
-        max-width: 0 !important;
-        overflow: hidden !important;
-        visibility: hidden !important;
-        border: none !important;
-    }
+    section[data-testid="stSidebar"] { display: block !important; }
     .block-container { position: relative; z-index: 1; padding-top: 1.2rem !important; max-width: 1280px; }
     div[data-testid="stMetric"] {
         background: linear-gradient(165deg, rgba(255,248,232,.14), rgba(20,24,18,.55));
@@ -157,36 +155,67 @@ st.markdown(
     footer {visibility: hidden !important;}
     .stDeployButton {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
+    [data-testid="stSidebarCollapsedControl"],
+    [data-testid="collapsedControl"],
+    [data-testid="stSidebarCollapseButton"] {
+        display: flex !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        width: 44px !important;
+        height: 44px !important;
+        border-radius: 14px !important;
+        background: rgba(255,243,224,.92) !important;
+        border: 1px solid #c49a58 !important;
+        box-shadow: 0 8px 20px rgba(0,0,0,.25);
+        z-index: 1000 !important;
+    }
     [data-testid="stSidebarCollapsedControl"] svg,
     [data-testid="collapsedControl"] svg,
-    [data-testid="stSidebarCollapsedControl"] span,
-    [data-testid="collapsedControl"] span,
-    [data-testid="stSidebarCollapseButton"] svg { display: none !important; }
-    [data-testid="stSidebarCollapsedControl"],
-    [data-testid="collapsedControl"] {
-        font-size: 0 !important;
-        color: transparent !important;
+    [data-testid="stSidebarCollapseButton"] svg {
+        display: none !important;
     }
     [data-testid="stSidebarCollapsedControl"]::before,
     [data-testid="collapsedControl"]::before,
     [data-testid="stSidebarCollapseButton"]::before {
         content: "🍄‍🟫";
-        font-size: 1.8rem;
-        color: #5a3a1a;
+        font-size: 1.7rem;
         line-height: 1;
     }
     .login-card {
-        max-width: 440px; margin: 14vh auto; padding: 34px 30px 30px;
-        background: linear-gradient(180deg, rgba(255,248,236,.94), rgba(245,232,206,.88));
-        border-radius: 28px;
-        border: 1px solid rgba(180,140,70,.35);
-        box-shadow: 0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 #fff;
-        animation: fadeup .6s ease;
+        max-width: 460px; margin: 10vh auto 8px; padding: 36px 28px 22px;
+        background: linear-gradient(165deg, rgba(18,22,16,.62), rgba(10,14,10,.42));
+        border-radius: 30px;
+        border: 1px solid rgba(232,201,130,.28);
+        box-shadow: 0 28px 70px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12);
+        backdrop-filter: blur(18px);
+        animation: fadeup .7s ease;
         text-align: center;
-        color: #2a1c0c;
+        color: #fff6e6;
     }
-    .login-card h1 { color: #2a1c0c !important; text-shadow: none !important; margin-bottom: .2rem; }
-    .login-card p { color: #5a4630 !important; text-shadow: none !important; }
+    .login-card .kicker {
+        letter-spacing: .26em; text-transform: uppercase; font-size: .68rem;
+        color: #e8d7b0 !important; margin: 0 0 8px; text-shadow: none !important;
+    }
+    .login-card h1 {
+        color: #fff6e6 !important; text-shadow: 0 2px 16px rgba(0,0,0,.6) !important;
+        font-size: 2.35rem; margin: 0 0 8px;
+    }
+    .login-card p { color: #f0e2c8 !important; text-shadow: none !important; margin: 0; opacity: .92; }
+    .login-card .chip-row { justify-content: center; }
+    .login-wrap { max-width: 460px; margin: 0 auto 18vh; }
+    .login-wrap [data-testid="stTextInput"] input {
+        background: rgba(255,248,236,.12) !important;
+        color: #fff8ea !important;
+        border: 1px solid rgba(232,201,130,.35) !important;
+        border-radius: 14px !important;
+    }
+    .login-wrap button[kind="primary"] {
+        background: linear-gradient(180deg, #d4a85a, #b37a2e) !important;
+        color: #1a1208 !important;
+        border: none !important;
+        border-radius: 14px !important;
+        font-weight: 700 !important;
+    }
     .hero {
         background: linear-gradient(120deg, rgba(12,16,12,.55), rgba(18,22,16,.28));
         border: 1px solid rgba(232,201,130,.22);
@@ -230,6 +259,12 @@ st.markdown(
     """.replace("__SFONDO__", _sfondo),
     unsafe_allow_html=True,
 )
+st.markdown(
+    '<div class="fungo-float fungo-a">🍄‍🟫</div>'
+    '<div class="fungo-float fungo-b">🍄‍🟫</div>'
+    '<div class="fungo-float fungo-c">🍄</div>',
+    unsafe_allow_html=True,
+)
 
 if "app_ok" not in st.session_state:
     st.session_state["app_ok"] = False
@@ -238,11 +273,23 @@ if "ruolo" not in st.session_state:
 
 if not st.session_state["app_ok"]:
     st.markdown(
-        "<div class='login-card'><h1>Porcini Predictor</h1>"
-        "<p>Il bosco ti aspetta. Entra con la password.</p></div>",
+        """
+        <div class="login-card">
+          <p class="kicker">Centro · Sud Italia</p>
+          <h1>Porcini Predictor</h1>
+          <p>Il bosco è chiuso a chiave. Entra e leggi pioggia, vento e quota.</p>
+          <div class="chip-row">
+            <span class="chip">Abruzzo</span>
+            <span class="chip">Molise</span>
+            <span class="chip">Lazio</span>
+            <span class="chip">Campania</span>
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-    pw = st.text_input("Password", type="password", placeholder="Password")
+    st.markdown('<div class="login-wrap">', unsafe_allow_html=True)
+    pw = st.text_input("Password", type="password", placeholder="Password del bosco", label_visibility="collapsed")
     if st.button("Entra nel bosco", type="primary", use_container_width=True):
         if pw == GUEST_PASS:
             st.session_state["app_ok"] = True
@@ -250,6 +297,7 @@ if not st.session_state["app_ok"]:
             st.rerun()
         else:
             st.error("Password errata")
+    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 IS_ADMIN = False
