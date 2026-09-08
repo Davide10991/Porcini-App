@@ -207,9 +207,20 @@ st.markdown(
     [data-testid="stSidebar"] [data-baseweb="checkbox"] span[data-checked="true"] { background: #d86a38 !important; border-color: #d86a38 !important; }
     [data-testid="stSidebar"] .stSlider [role="slider"] { background-color: #d86a38 !important; border: 2px solid #f3ead2 !important; }
     [data-testid="stSidebar"] .stSlider > div > div > div > div { background: linear-gradient(90deg, #3f6d3a, #d86a38) !important; }
-    [data-testid="stSidebar"] [data-testid="stTextInput"] input {
-        background: rgba(215,236,200,.08) !important; color: #fff8ea !important;
-        border: 1px solid rgba(168,214,150,.28) !important; border-radius: 12px !important;
+    [data-testid="stSidebar"] [data-testid="stTextInput"] input,
+    [data-testid="stSidebar"] input[type="text"],
+    [data-testid="stSidebar"] input[type="search"] {
+        background: #10210f !important;
+        color: #f4ffe8 !important;
+        -webkit-text-fill-color: #f4ffe8 !important;
+        caret-color: #d86a38 !important;
+        border: 1px solid #6aa25c !important;
+        border-radius: 12px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stTextInput"] input::placeholder {
+        color: #9cbf96 !important;
+        -webkit-text-fill-color: #9cbf96 !important;
+        opacity: 1 !important;
     }
     .side-hero {
         background: radial-gradient(280px 120px at 20% 0%, rgba(196,86,42,.22), transparent 70%),
