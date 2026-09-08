@@ -24,7 +24,7 @@ except Exception:
     METEOSTAT_OK = False
 
 st.set_page_config(
-    page_title="Porcini Predictor - Centro-Sud Italia",
+    page_title="Boletus Map",
     page_icon="sfondo_login.jpg",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -245,8 +245,8 @@ if not st.session_state["app_ok"]:
         """
         <div class="login-card">
           <p class="kicker">Centro · Sud Italia</p>
-          <h1>Porcini Predictor</h1>
-          <p>Il bosco è chiuso a chiave. Entra e leggi pioggia, vento e quota.</p>
+          <h1>Boletus Map</h1>
+          <p>Mappa interattiva crescita Boletus</p>
           <div class="chip-row">
             <span class="chip">Abruzzo</span>
             <span class="chip">Molise</span>
@@ -3232,10 +3232,10 @@ st.markdown(
       <p class="kicker">Micelio · Appennino</p>
       <div class="hero-title">
         <span class="hero-fungo">🍄‍🟫</span>
-        <h1>Porcini Predictor</h1>
+        <h1>Boletus Map</h1>
         <span class="hero-fungo">🍄‍🟫</span>
       </div>
-      <p class="lede">Mappa i comprensori migliori per i porcini e leggi il bosco da pioggia, vento e quota. Non è ogni sentiero: sono i nuclei che contano.</p>
+      <p class="lede">Mappa interattiva crescita Boletus</p>
       <div class="chip-row">
         <span class="chip">Abruzzo</span>
         <span class="chip">Molise</span>
@@ -3257,7 +3257,7 @@ with st.sidebar:
         <div class="side-hero">
           <div class="side-hero-emoji">🍄‍🟫</div>
           <p class="kicker">Diario del bosco</p>
-          <h3>Porcini Predictor</h3>
+          <h3>Boletus Map</h3>
           <p class="side-quote">Nei boschi conquistò la sua misura. Laggiù, per la prima volta in vita sua, si sentiva consolato, come se fino a quel momento non avesse mai trovato alcuna consolazione. E ogni volta, sulla soglia del bosco, si sentiva indomabile, come prima di compiere un atto grandioso; come prima di un giorno grandioso.</p>
         </div>
         """,
