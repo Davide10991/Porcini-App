@@ -96,7 +96,7 @@ st.markdown(
     }
     .stApp p, .stApp li, .stApp span, .stApp label, .stApp .stMarkdown {
         color: #f4ead8 !important;
-        text-shadow: 0 1px 8px rgba(0,0,0,.55);
+        text-shadow: 0 1px 4px rgba(0,0,0,.35);
     }
     [data-testid="stHeader"] { background: transparent; }
     [data-testid="stSidebar"] {
@@ -126,11 +126,17 @@ st.markdown(
     div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #fff8ea !important; font-family: 'Cormorant Garamond', serif; font-size: 2.1rem !important; }
     @keyframes fadeup { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: none;} }
     .stButton>button {
-        border-radius: 12px !important;
+        border-radius: 14px !important;
         font-weight: 600;
         transition: transform .15s ease, box-shadow .15s ease;
+        letter-spacing: .02em;
     }
-    .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+    .stButton>button:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.28); }
+    button[kind="primary"] {
+        background: linear-gradient(180deg, #e0b56a, #b98432) !important;
+        color: #1a1208 !important;
+        border: none !important;
+    }
     [data-testid="stSidebar"] button {
         color: #1a1208 !important;
         background-color: #fff3e0 !important;
@@ -142,8 +148,8 @@ st.markdown(
         color: #1a1208 !important;
     }
     [data-testid="stSidebar"] button[kind="primary"] {
-        color: #ffffff !important;
-        background-color: #c44536 !important;
+        color: #1a1208 !important;
+        background: linear-gradient(180deg, #e0b56a, #b98432) !important;
         border: none !important;
     }
     [data-testid="stSidebar"] button[kind="primary"] p,
@@ -182,15 +188,25 @@ st.markdown(
         line-height: 1;
     }
     .login-card {
-        max-width: 460px; margin: 10vh auto 8px; padding: 36px 28px 22px;
-        background: linear-gradient(165deg, rgba(18,22,16,.62), rgba(10,14,10,.42));
-        border-radius: 30px;
-        border: 1px solid rgba(232,201,130,.28);
-        box-shadow: 0 28px 70px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.12);
-        backdrop-filter: blur(18px);
+        max-width: 460px; margin: 9vh auto 8px; padding: 40px 28px 24px;
+        background:
+            radial-gradient(500px 180px at 50% -20%, rgba(212,168,90,.22), transparent 70%),
+            linear-gradient(165deg, rgba(18,22,16,.72), rgba(10,14,10,.48));
+        border-radius: 32px;
+        border: 1px solid rgba(232,201,130,.32);
+        box-shadow: 0 28px 70px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.14);
+        backdrop-filter: blur(22px);
         animation: fadeup .7s ease;
         text-align: center;
         color: #fff6e6;
+        position: relative;
+    }
+    .login-card::before {
+        content: "🍄‍🟫";
+        display: block;
+        font-size: 2.4rem;
+        margin-bottom: 8px;
+        animation: floaty 5.5s ease-in-out infinite;
     }
     .login-card .kicker {
         letter-spacing: .26em; text-transform: uppercase; font-size: .68rem;
@@ -217,26 +233,32 @@ st.markdown(
         font-weight: 700 !important;
     }
     .hero {
-        background: linear-gradient(120deg, rgba(12,16,12,.55), rgba(18,22,16,.28));
-        border: 1px solid rgba(232,201,130,.22);
-        border-radius: 28px;
-        padding: 22px 26px 18px;
+        background:
+            radial-gradient(700px 220px at 0% 0%, rgba(212,168,90,.16), transparent 55%),
+            linear-gradient(120deg, rgba(12,16,12,.62), rgba(18,22,16,.32));
+        border: 1px solid rgba(232,201,130,.26);
+        border-radius: 30px;
+        padding: 26px 26px 20px;
         margin: 0 0 18px;
-        backdrop-filter: blur(18px);
-        box-shadow: 0 16px 40px rgba(0,0,0,.25);
+        backdrop-filter: blur(20px);
+        box-shadow: 0 18px 48px rgba(0,0,0,.28);
     }
-    .hero h1 { font-size: 2.55rem; margin: 0; }
-    .hero .kicker { letter-spacing: .22em; text-transform: uppercase; font-size: .72rem; color: #e8d7b0 !important; margin: 0 0 6px; }
-    .hero .lede { max-width: 46rem; opacity: .92; margin: 8px 0 0; }
-    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .hero h1 { font-size: clamp(2.1rem, 7vw, 3.1rem); margin: 0; line-height: 1.05; }
+    .hero .kicker { letter-spacing: .28em; text-transform: uppercase; font-size: .68rem; color: #e8d7b0 !important; margin: 0 0 8px; }
+    .hero .lede { max-width: 40rem; opacity: .9; margin: 10px 0 0; line-height: 1.45; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
     .chip {
-        border: 1px solid rgba(232,201,130,.35);
-        background: rgba(255,255,255,.08);
+        border: 1px solid rgba(232,201,130,.38);
+        background: rgba(255,236,200,.08);
         color: #fff4de;
         border-radius: 999px;
-        padding: 4px 12px;
-        font-size: .78rem;
-        letter-spacing: .04em;
+        padding: 5px 13px;
+        font-size: .76rem;
+        letter-spacing: .06em;
+    }
+    .stApp [data-testid="stHeading"] h2 {
+        border-bottom: 1px solid rgba(232,201,130,.22);
+        padding-bottom: .35rem;
     }
     iframe, .stFolium, [data-testid="stIFrame"] {
         border-radius: 20px !important;
