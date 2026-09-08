@@ -57,13 +57,16 @@ _sfondo = (
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@600;700&family=Source+Sans+3:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Outfit:wght@360;480;600;700&display=swap');
+    html, body, [data-testid="stAppViewContainer"] { font-family: 'Outfit', sans-serif; }
     .stApp {
         background:
-            linear-gradient(180deg, rgba(8,6,4,.42) 0%, rgba(8,6,4,.32) 45%, rgba(8,6,4,.50) 100%),
+            radial-gradient(1200px 700px at 12% -10%, rgba(196,154,88,.22), transparent 55%),
+            radial-gradient(900px 500px at 110% 8%, rgba(80,140,90,.14), transparent 50%),
+            linear-gradient(180deg, rgba(6,8,6,.55) 0%, rgba(8,10,7,.38) 40%, rgba(5,7,5,.62) 100%),
             url('__SFONDO__')
             center/cover fixed no-repeat,
-            #1a140e;
+            #0d120e;
     }
     .stApp::before {
         content: "🍄‍🟫";
@@ -81,25 +84,27 @@ st.markdown(
     }
     h1, h2, h3 {
         font-family: 'Cormorant Garamond', serif !important;
-        letter-spacing: .02em;
-        color: #fff8ee !important;
-        text-shadow: 0 2px 10px rgba(0,0,0,.85), 0 0 2px #000;
+        letter-spacing: .03em;
+        color: #fff6e6 !important;
+        text-shadow: 0 2px 16px rgba(0,0,0,.75);
     }
     .stApp p, .stApp li, .stApp span, .stApp label, .stApp .stMarkdown {
-        color: #fff8ee !important;
-        text-shadow: 0 1px 6px rgba(0,0,0,.75);
+        color: #f4ead8 !important;
+        text-shadow: 0 1px 8px rgba(0,0,0,.55);
     }
     [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stToolbar"] { display: none !important; }
     [data-testid="stSidebar"] {
-        background: rgba(12,8,4,.94) !important;
-        backdrop-filter: blur(12px);
-        border-right: 1px solid rgba(196,154,88,.35);
+        background: linear-gradient(180deg, rgba(14,18,14,.96), rgba(10,12,10,.92)) !important;
+        backdrop-filter: blur(18px);
+        border-right: 1px solid rgba(212,175,99,.28);
+        box-shadow: 8px 0 40px rgba(0,0,0,.35);
     }
-    [data-testid="stSidebar"] * { color: #fff6e8 !important; text-shadow: none !important; }
+    [data-testid="stSidebar"] * { color: #f6edd9 !important; text-shadow: none !important; }
     [data-testid="stSidebar"] label, [data-testid="stSidebar"] p,
     [data-testid="stSidebar"] span, [data-testid="stSidebar"] .stMarkdown {
-        color: #fff6e8 !important;
-        font-weight: 600 !important;
+        color: #f6edd9 !important;
+        font-weight: 500 !important;
     }
     [data-testid="stSidebar"][aria-expanded="false"] {
         width: 0 !important;
@@ -109,13 +114,18 @@ st.markdown(
         visibility: hidden !important;
         border: none !important;
     }
-    .block-container { position: relative; z-index: 1; }
+    .block-container { position: relative; z-index: 1; padding-top: 1.2rem !important; max-width: 1280px; }
     div[data-testid="stMetric"] {
-        background: rgba(255,248,235,.9);
-        border: 1px solid rgba(140,90,40,.25);
-        border-radius: 16px; padding: 8px 12px;
+        background: linear-gradient(165deg, rgba(255,248,232,.14), rgba(20,24,18,.55));
+        border: 1px solid rgba(232,201,130,.28);
+        border-radius: 22px;
+        padding: 14px 16px 10px;
+        backdrop-filter: blur(16px);
+        box-shadow: 0 10px 30px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
         animation: fadeup .7s ease both;
     }
+    div[data-testid="stMetric"] label { color: #e8d7b0 !important; letter-spacing: .08em; text-transform: uppercase; font-size: .72rem !important; }
+    div[data-testid="stMetric"] [data-testid="stMetricValue"] { color: #fff8ea !important; font-family: 'Cormorant Garamond', serif; font-size: 2.1rem !important; }
     @keyframes fadeup { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: none;} }
     .stButton>button {
         border-radius: 12px !important;
@@ -166,12 +176,56 @@ st.markdown(
         line-height: 1;
     }
     .login-card {
-        max-width: 420px; margin: 12vh auto; padding: 28px 26px;
-        background: rgba(255,248,235,.92); border-radius: 22px;
-        box-shadow: 0 20px 50px rgba(0,0,0,.35);
+        max-width: 440px; margin: 14vh auto; padding: 34px 30px 30px;
+        background: linear-gradient(180deg, rgba(255,248,236,.94), rgba(245,232,206,.88));
+        border-radius: 28px;
+        border: 1px solid rgba(180,140,70,.35);
+        box-shadow: 0 30px 80px rgba(0,0,0,.45), inset 0 1px 0 #fff;
         animation: fadeup .6s ease;
         text-align: center;
+        color: #2a1c0c;
     }
+    .login-card h1 { color: #2a1c0c !important; text-shadow: none !important; margin-bottom: .2rem; }
+    .login-card p { color: #5a4630 !important; text-shadow: none !important; }
+    .hero {
+        background: linear-gradient(120deg, rgba(12,16,12,.55), rgba(18,22,16,.28));
+        border: 1px solid rgba(232,201,130,.22);
+        border-radius: 28px;
+        padding: 22px 26px 18px;
+        margin: 0 0 18px;
+        backdrop-filter: blur(18px);
+        box-shadow: 0 16px 40px rgba(0,0,0,.25);
+    }
+    .hero h1 { font-size: 2.55rem; margin: 0; }
+    .hero .kicker { letter-spacing: .22em; text-transform: uppercase; font-size: .72rem; color: #e8d7b0 !important; margin: 0 0 6px; }
+    .hero .lede { max-width: 46rem; opacity: .92; margin: 8px 0 0; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .chip {
+        border: 1px solid rgba(232,201,130,.35);
+        background: rgba(255,255,255,.08);
+        color: #fff4de;
+        border-radius: 999px;
+        padding: 4px 12px;
+        font-size: .78rem;
+        letter-spacing: .04em;
+    }
+    iframe, .stFolium, [data-testid="stIFrame"] {
+        border-radius: 20px !important;
+        overflow: hidden;
+        box-shadow: 0 16px 40px rgba(0,0,0,.3);
+        border: 1px solid rgba(232,201,130,.2);
+    }
+    [data-testid="stExpander"] {
+        background: rgba(12,16,12,.42);
+        border: 1px solid rgba(232,201,130,.18);
+        border-radius: 16px !important;
+        margin-bottom: 8px;
+        backdrop-filter: blur(10px);
+    }
+    [data-testid="stExpander"] summary { color: #fff6e6 !important; }
+    .stProgress > div > div { background: linear-gradient(90deg, #c49a58, #e8c98a) !important; }
+    div[data-testid="stSlider"] { padding-bottom: .4rem; }
+    [data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; }
     </style>
     """.replace("__SFONDO__", _sfondo),
     unsafe_allow_html=True,
@@ -184,8 +238,8 @@ if "ruolo" not in st.session_state:
 
 if not st.session_state["app_ok"]:
     st.markdown(
-        "<div class='login-card'><h1>🍄‍🟫 Porcini Predictor</h1>"
-        "<p>Inserisci la password.</p></div>",
+        "<div class='login-card'><h1>Porcini Predictor</h1>"
+        "<p>Il bosco ti aspetta. Entra con la password.</p></div>",
         unsafe_allow_html=True,
     )
     pw = st.text_input("Password", type="password", placeholder="Password")
@@ -3155,12 +3209,21 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
 
 
 # ===================== UI =====================
-st.title("🍄‍🟫 Porcini Predictor")
-st.markdown("**Abruzzo • Molise • Lazio • Campania**")
-st.caption(
-    "Zone boschive principali delle 4 regioni. Non è ogni singolo bosco, "
-    "ma i comprensori più importanti per i porcini. "
-    "Le nascite reali dipendono anche da esposizione, suolo e micelio."
+st.markdown(
+    """
+    <div class="hero">
+      <p class="kicker">Centro · Sud Italia</p>
+      <h1>Porcini Predictor</h1>
+      <p class="lede">Mappa i comprensori migliori per i porcini e leggi il bosco da pioggia, vento e quota. Non è ogni sentiero: sono i nuclei che contano.</p>
+      <div class="chip-row">
+        <span class="chip">Abruzzo</span>
+        <span class="chip">Molise</span>
+        <span class="chip">Lazio</span>
+        <span class="chip">Campania</span>
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 with st.sidebar:
@@ -3169,7 +3232,7 @@ with st.sidebar:
     mn_token_manuale, mn_codici = "", ""
 
     st.markdown("---")
-    st.header("⚙️ Filtri e regole")
+    st.header("Filtri del bosco")
     st.markdown("**Regioni da calcolare**")
     c1, c2 = st.columns(2)
     with c1:
