@@ -277,6 +277,68 @@ st.markdown(
     .stProgress > div > div { background: linear-gradient(90deg, #c49a58, #e8c98a) !important; }
     div[data-testid="stSlider"] { padding-bottom: .4rem; }
     [data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; }
+    [data-testid="stSidebar"] .block-container { padding-top: .6rem; }
+    [data-testid="stSidebar"] hr { border-color: rgba(232,201,130,.2) !important; }
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] {
+        background: rgba(255,248,230,.06);
+        border: 1px solid rgba(232,201,130,.18);
+        border-radius: 14px;
+        padding: 2px 8px;
+        margin-bottom: 6px;
+        transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    [data-testid="stSidebar"] [data-testid="stCheckbox"]:hover {
+        border-color: rgba(232,201,130,.45);
+        background: rgba(224,181,106,.12);
+        transform: translateX(2px);
+    }
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] input:checked + div,
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] [data-checked="true"],
+    [data-testid="stSidebar"] [data-baseweb="checkbox"] span[data-checked="true"] {
+        background: #d4a85a !important;
+        border-color: #d4a85a !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="checkbox"] > div,
+    [data-testid="stSidebar"] [data-testid="stCheckbox"] div[role="checkbox"] {
+        accent-color: #d4a85a;
+    }
+    [data-testid="stSidebar"] .stSlider [data-baseweb="slider"] div[role="slider"],
+    [data-testid="stSidebar"] .stSlider [role="slider"] {
+        background-color: #e8c98a !important;
+        border: 2px solid #fff4de !important;
+        box-shadow: 0 0 0 4px rgba(212,168,90,.25);
+    }
+    [data-testid="stSidebar"] .stSlider > div > div > div > div {
+        background: linear-gradient(90deg, #8a6230, #e8c98a) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stTextInput"] input {
+        background: rgba(255,248,236,.08) !important;
+        color: #fff8ea !important;
+        border: 1px solid rgba(232,201,130,.28) !important;
+        border-radius: 12px !important;
+    }
+    .side-card {
+        background: rgba(255,248,230,.06);
+        border: 1px solid rgba(232,201,130,.2);
+        border-radius: 16px;
+        padding: 10px 12px 8px;
+        margin: 0 0 12px;
+    }
+    .side-card b { color: #e8d7b0 !important; }
+    .side-hero {
+        background:
+            radial-gradient(280px 120px at 20% 0%, rgba(212,168,90,.2), transparent 70%),
+            linear-gradient(180deg, rgba(255,248,230,.1), rgba(255,248,230,.04));
+        border: 1px solid rgba(232,201,130,.22);
+        border-radius: 20px;
+        padding: 16px 14px 14px;
+        margin: 0 0 14px;
+        text-align: center;
+    }
+    .side-hero-emoji { font-size: 2.4rem; animation: floaty 5.5s ease-in-out infinite; }
+    .side-hero h3 { margin: 0; font-size: 1.45rem; }
+    .side-hero p { margin: 6px 0 0; font-size: .86rem; opacity: .9; }
+    .side-hero .chip-row { justify-content: center; }
     </style>
     """.replace("__SFONDO__", _sfondo),
     unsafe_allow_html=True,
@@ -3301,7 +3363,22 @@ with st.sidebar:
     mn_email, mn_pass, collega_mn = "", "", False
     mn_token_manuale, mn_codici = "", ""
 
-    st.markdown("---")
+    st.markdown(
+        """
+        <div class="side-hero">
+          <div class="side-hero-emoji">🍄‍🟫</div>
+          <p class="kicker">Diario del bosco</p>
+          <h3>Porcini Predictor</h3>
+          <p>Dopo la pioggia: faggio 15 gg, castagno 13, quercia 12.</p>
+          <div class="chip-row">
+            <span class="chip">Porcino</span>
+            <span class="chip">Estatino</span>
+            <span class="chip">Aereus</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.header("Filtri del bosco")
     st.markdown("**Regioni da calcolare**")
     c1, c2 = st.columns(2)
