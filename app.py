@@ -2246,8 +2246,18 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             wc_piu_pioggia = False
     ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20 and not wc_piu_pioggia
     _nz = (nome_zona or "").lower()
-    forza_piedimonte = "piedimonte" in _nz or "castello del matese" in _nz
-    forza_cusano = ("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz)
+    d_gm = distanza_km(lat, lon, 41.350254, 14.365734)
+    d_vt = distanza_km(lat, lon, 41.348467, 14.525056)
+    forza_piedimonte = (
+        "alife" not in _nz
+        and (d_gm <= 5.0 or "piedimonte" in _nz or "castello del matese" in _nz)
+    )
+    forza_cusano = d_vt <= 5.0 or (("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz))
+    if forza_piedimonte and forza_cusano:
+        if d_vt < d_gm:
+            forza_piedimonte = False
+        else:
+            forza_cusano = False
     if usa_wc and (not ha_mn_vicina or forza_piedimonte or forza_cusano):
         cat = wc_catalogo()
         raggio_vicino = 5.0
