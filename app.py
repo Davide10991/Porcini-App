@@ -3289,7 +3289,29 @@ with st.sidebar:
         ("abete_bianco", t_ab), ("abete_rosso", t_ar),
     ) if on]
     quota_range = st.slider("Quota (m)", 0, 1800, (0, 1800), step=50)
-    cerca = st.text_input("Cerca zona (nome)", value="")
+    cerca = st.text_input("Cerca zona (nome)", value="", placeholder="es. matese, sangro…")
+    q_cerca = (cerca or "").strip().lower()
+    if q_cerca:
+        suggeriti = []
+        visti = set()
+        for p in PUNTI:
+            n = p["nome"]
+            if q_cerca in n.lower() and n not in visti:
+                visti.add(n)
+                suggeriti.append(n)
+            if len(suggeriti) >= 15:
+                break
+        if suggeriti:
+            st.caption(f"{len(suggeriti)} zone")
+            scelto = st.selectbox(
+                "Suggerimenti",
+                ["— continua a scrivere —"] + suggeriti,
+                label_visibility="collapsed",
+            )
+            if scelto and not scelto.startswith("—"):
+                cerca = scelto
+        else:
+            st.caption("Nessuna zona con queste lettere")
 
     st.markdown("---")
     pioggia_min = st.slider("Pioggia minima ideale (mm / 30gg)", 20, 80, 40)
