@@ -2245,7 +2245,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             wc_piu_pioggia = False
     ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20 and not wc_piu_pioggia
-    if usa_wc and not ha_mn_vicina:
+    _nz = (nome_zona or "").lower()
+    forza_piedimonte = "piedimonte" in _nz or "castello del matese" in _nz
+    forza_cusano = ("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz)
+    if usa_wc and (not ha_mn_vicina or forza_piedimonte or forza_cusano):
         cat = wc_catalogo()
         raggio_vicino = 5.0
         tutte_dist = []
@@ -2258,7 +2261,49 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         tutte_dist.sort(key=lambda x: x["distanza_km"])
         vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino]
         nome_l = (nome_zona or "").lower()
-        if any(k in nome_l for k in ("cusano", "mutri", "casano")):
+        if forza_piedimonte:
+            gm = None
+            for staz in cat:
+                code = str(staz.get("code") or "").upper()
+                nid = str(staz.get("id") or "")
+                nn = (staz.get("nome") or "").lower()
+                if code == "3XWWUH5" or nid == "8581011017" or "gian marco" in nn:
+                    gm = dict(staz)
+                    gm["distanza_km"] = round(distanza_km(lat, lon, staz["lat"], staz["lon"]), 1)
+                    break
+            if gm is None:
+                gm = {
+                    "code": "3XWWUH5",
+                    "id": "8581011017",
+                    "nome": "Gian Marco",
+                    "lat": 41.350254,
+                    "lon": 14.365734,
+                    "online": True,
+                    "distanza_km": round(distanza_km(lat, lon, 41.350254, 14.365734), 1),
+                }
+            vicine_vicine = [gm]
+        if forza_cusano:
+            vt = None
+            for staz in cat:
+                code = str(staz.get("code") or "").upper()
+                nid = str(staz.get("id") or "")
+                nn = (staz.get("nome") or "").lower()
+                if code == "3EE8J9B" or nid == "7400786303" or "vitelli" in nn:
+                    vt = dict(staz)
+                    vt["distanza_km"] = round(distanza_km(lat, lon, staz["lat"], staz["lon"]), 1)
+                    break
+            if vt is None:
+                vt = {
+                    "code": "3EE8J9B",
+                    "id": "7400786303",
+                    "nome": "Giuseppe Vitelli",
+                    "lat": 41.348467,
+                    "lon": 14.525056,
+                    "online": True,
+                    "distanza_km": round(distanza_km(lat, lon, 41.348467, 14.525056), 1),
+                }
+            vicine_vicine = [vt]
+        if any(k in nome_l for k in ("cusano", "mutri", "casano")) and not forza_cusano:
             preferite = [x for x in vicine_vicine if "vitelli" in (x.get("nome") or "").lower() or str(x.get("code") or "").upper() == "3EE8J9B"]
             altre = [x for x in vicine_vicine if x not in preferite]
             vicine_vicine = preferite + altre
@@ -2336,7 +2381,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 return storico_om, info, forecast, soil, vento
 
     # 1) MeteoNetwork da lista pubblica (stessa pagina /it/stations-list)
-    cat_mn = mn_catalogo_pubblico()
+    cat_mn = None if (forza_piedimonte or forza_cusano) else mn_catalogo_pubblico()
     if cat_mn:
         vicine_pub = []
         nome_l0 = (nome_zona or "").lower()
@@ -2459,7 +2504,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
 
     # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
-    if mn_token:
+    if mn_token and not (forza_piedimonte or forza_cusano):
         stazioni = list(stazioni_mn or [])
         if not stazioni:
             stazioni = mn_stazioni_da_codici(mn_token, mn_codici)
