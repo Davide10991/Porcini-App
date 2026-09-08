@@ -237,9 +237,16 @@ st.markdown(
         backdrop-filter: blur(20px);
         box-shadow: 0 18px 48px rgba(0,0,0,.28);
     }
+    .hero { text-align: center; }
+    .hero-title {
+        display: flex; align-items: center; justify-content: center; gap: 12px;
+        margin: 0;
+    }
+    .hero-fungo { font-size: clamp(1.8rem, 6vw, 2.6rem); line-height: 1; }
     .hero h1 { font-size: clamp(2.1rem, 7vw, 3.1rem); margin: 0; line-height: 1.05; }
     .hero .kicker { letter-spacing: .28em; text-transform: uppercase; font-size: .68rem; color: #e8d7b0 !important; margin: 0 0 8px; }
-    .hero .lede { max-width: 40rem; opacity: .9; margin: 10px 0 0; line-height: 1.45; }
+    .hero .lede { max-width: 40rem; opacity: .9; margin: 10px auto 0; line-height: 1.45; }
+    .hero .chip-row { justify-content: center; }
     .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
     .chip {
         border: 1px solid rgba(232,201,130,.38);
@@ -3340,7 +3347,11 @@ st.markdown(
     """
     <div class="hero">
       <p class="kicker">Centro · Sud Italia</p>
-      <h1>Porcini Predictor</h1>
+      <div class="hero-title">
+        <span class="hero-fungo">🍄‍🟫</span>
+        <h1>Porcini Predictor</h1>
+        <span class="hero-fungo">🍄‍🟫</span>
+      </div>
       <p class="lede">Mappa i comprensori migliori per i porcini e leggi il bosco da pioggia, vento e quota. Non è ogni sentiero: sono i nuclei che contano.</p>
       <div class="chip-row">
         <span class="chip">Abruzzo</span>
