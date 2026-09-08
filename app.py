@@ -3546,6 +3546,48 @@ with col2:
             st.progress(min(100, int(r["score"])) / 100)
 
 st.markdown("---")
+st.subheader("Pioggia live")
+st.caption("Radar in tempo reale sul Centro Italia. I mm di oggi sotto arrivano dalle stazioni usate nel Calcola.")
+st.components.v1.iframe(
+    "https://www.rainviewer.com/map.html?loc=42.15,13.35,7&oFa=0&oC=1&oU=0&oCS=1&oF=0&oAP=1&rmt=4&color=5&c=1&o=90&lm=1&th=0&sm=1&sn=1",
+    height=420,
+)
+oggi_txt = datetime.now().strftime("%Y-%m-%d")
+live_rows = []
+visti_staz = set()
+for r in risultati_view:
+    meteo = r.get("meteo") or {}
+    staz = meteo.get("stazione") or "n/d"
+    if staz in visti_staz:
+        continue
+    visti_staz.add(staz)
+    mm_oggi = None
+    fonte = str(meteo.get("fonte") or "")
+    m = re.search(r"oggi[^0-9]*([0-9]+(?:[.,][0-9]+)?)\s*mm", fonte, flags=re.I)
+    if m:
+        try:
+            mm_oggi = float(m.group(1).replace(",", "."))
+        except Exception:
+            mm_oggi = None
+    if mm_oggi is None:
+        for g in meteo.get("giorni_pluviometro") or []:
+            gs = str(g)
+            if oggi_txt in gs or datetime.now().strftime("%d/%m") in gs:
+                try:
+                    mm_oggi = float(gs.rsplit(":", 1)[-1].replace("mm", "").strip().replace(",", "."))
+                except Exception:
+                    pass
+    live_rows.append({
+        "zona": r["nome"],
+        "stazione": staz,
+        "mm_oggi": mm_oggi if mm_oggi is not None else "n/d",
+        "fonte": fonte[:80],
+    })
+if live_rows:
+    st.dataframe(pd.DataFrame(live_rows), width="stretch", hide_index=True)
+st.markdown("[Apri radar a schermo intero](https://www.rainviewer.com/map.html?loc=42.15,13.35,7)")
+
+st.markdown("---")
 st.subheader("🍄‍🟫 Tabella e export")
 if risultati_view:
     tab = pd.DataFrame([{
