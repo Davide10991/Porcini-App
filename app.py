@@ -3440,20 +3440,6 @@ with col1:
     st.subheader("Mappa delle zone")
     if risultati_view:
         m = folium.Map(location=[41.7, 14.0], zoom_start=7)
-        try:
-            folium.WmsTileLayer(
-                url="https://radar-geowebcache.protezionecivile.it/service/wms",
-                layers="radar:vmi",
-                fmt="image/png",
-                transparent=True,
-                name="Radar Protezione Civile",
-                overlay=True,
-                control=True,
-                opacity=0.62,
-            ).add_to(m)
-            folium.LayerControl(collapsed=True).add_to(m)
-        except Exception:
-            pass
         for r in risultati_view:
             color = (
                 "green" if r["score"] >= 70
