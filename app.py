@@ -247,6 +247,7 @@ if not st.session_state["app_ok"]:
           <p class="kicker">Centro · Sud Italia</p>
           <h1>Boletus Map</h1>
           <p>Mappa interattiva crescita Boletus</p>
+          <p>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
           <div class="chip-row">
             <span class="chip">Abruzzo</span>
             <span class="chip">Molise</span>
@@ -3254,6 +3255,7 @@ st.markdown(
         <span class="hero-fungo">🍄‍🟫</span>
       </div>
       <p class="lede">Mappa interattiva crescita Boletus</p>
+      <p class="lede">Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
       <div class="chip-row">
         <span class="chip">Abruzzo</span>
         <span class="chip">Molise</span>
@@ -3506,6 +3508,10 @@ with col1:
                 popup=folium.Popup(popup_html, max_width=260),
             ).add_to(m)
         st_folium(m, width=700, height=520, returned_objects=[])
+        st.subheader("Pioggia live")
+        st.caption("Radar Protezione Civile sotto le zone. Se non parte, apri il sito.")
+        st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
+        st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
     else:
         st.info("Nessuna zona sopra la soglia scelta.")
 
@@ -3560,10 +3566,7 @@ with col2:
             st.progress(min(100, int(r["score"])) / 100)
 
 st.markdown("---")
-st.subheader("Pioggia live")
-st.caption("Radar ufficiale Dipartimento della Protezione Civile. Se la mappa sotto non parte, apri il sito.")
-st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
-st.components.v1.iframe("https://radar.protezionecivile.it/", height=520)
+st.subheader("Mm di oggi dalle stazioni")
 oggi_txt = datetime.now().strftime("%Y-%m-%d")
 live_rows = []
 visti_staz = set()
