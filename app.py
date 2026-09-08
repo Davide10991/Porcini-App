@@ -3394,7 +3394,7 @@ with st.sidebar:
         ("faggio", t_fag), ("castagno", t_cas), ("quercia", t_que),
         ("abete_bianco", t_ab), ("abete_rosso", t_ar),
     ) if on]
-    quota_range = st.slider("Quota (m)", 100, 1800, (100, 1800), step=50)
+    quota_range = st.slider("Quota (m)", 0, 1800, (0, 1800), step=50)
     cerca = st.text_input("Cerca zona (nome)", value="")
 
     st.markdown("---")
