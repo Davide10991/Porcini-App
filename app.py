@@ -70,20 +70,14 @@ st.markdown(
     }
     .stApp::before {
         content: "🍄‍🟫";
-        position: fixed; left: 3%; bottom: 7%; font-size: 3.6rem;
-        animation: floaty 6s ease-in-out infinite; opacity: .55; z-index: 2; pointer-events: none;
-        filter: drop-shadow(0 8px 12px rgba(0,0,0,.35));
+        position: fixed; left: 10px; bottom: 10px; font-size: 1.8rem;
+        animation: floaty 7s ease-in-out infinite; opacity: .28; z-index: 0; pointer-events: none;
     }
     .stApp::after {
         content: "🍄‍🟫";
-        position: fixed; right: 5%; top: 11%; font-size: 2.7rem;
-        animation: floaty 7.5s ease-in-out infinite reverse; opacity: .48; z-index: 2; pointer-events: none;
-        filter: drop-shadow(0 8px 12px rgba(0,0,0,.35));
+        position: fixed; right: 12px; bottom: 14px; font-size: 1.5rem;
+        animation: floaty 8s ease-in-out infinite reverse; opacity: .22; z-index: 0; pointer-events: none;
     }
-    .fungo-float { position: fixed; z-index: 2; pointer-events: none; filter: drop-shadow(0 6px 10px rgba(0,0,0,.3)); }
-    .fungo-a { left: 18%; top: 22%; font-size: 1.8rem; animation: floaty 8s ease-in-out infinite; opacity: .42; }
-    .fungo-b { right: 16%; bottom: 18%; font-size: 2.2rem; animation: floaty 5.5s ease-in-out infinite reverse; opacity: .4; }
-    .fungo-c { left: 46%; bottom: 8%; font-size: 1.6rem; animation: floaty 9s ease-in-out infinite; opacity: .32; }
     @keyframes floaty {
         0%,100% { transform: translateY(0) rotate(-6deg); }
         50% { transform: translateY(-16px) rotate(8deg); }
@@ -339,17 +333,18 @@ st.markdown(
     .side-hero h3 { margin: 0; font-size: 1.45rem; }
     .side-hero p { margin: 6px 0 0; font-size: .86rem; opacity: .9; }
     .side-hero .chip-row { justify-content: center; }
+    .side-quote {
+        font-family: 'Cormorant Garamond', serif !important;
+        font-style: italic;
+        font-size: .92rem !important;
+        line-height: 1.45 !important;
+        text-align: left;
+        color: #f3e6cc !important;
+    }
     </style>
     """.replace("__SFONDO__", _sfondo),
     unsafe_allow_html=True,
 )
-st.markdown(
-    '<div class="fungo-float fungo-a">🍄‍🟫</div>'
-    '<div class="fungo-float fungo-b">🍄‍🟫</div>'
-    '<div class="fungo-float fungo-c">🍄</div>',
-    unsafe_allow_html=True,
-)
-
 if "app_ok" not in st.session_state:
     st.session_state["app_ok"] = False
 if "ruolo" not in st.session_state:
@@ -3369,12 +3364,7 @@ with st.sidebar:
           <div class="side-hero-emoji">🍄‍🟫</div>
           <p class="kicker">Diario del bosco</p>
           <h3>Porcini Predictor</h3>
-          <p>Dopo la pioggia: faggio 15 gg, castagno 13, quercia 12.</p>
-          <div class="chip-row">
-            <span class="chip">Porcino</span>
-            <span class="chip">Estatino</span>
-            <span class="chip">Aereus</span>
-          </div>
+          <p class="side-quote">Nei boschi conquistò la sua misura. Laggiù, per la prima volta in vita sua, si sentiva consolato, come se fino a quel momento non avesse mai trovato alcuna consolazione. E ogni volta, sulla soglia del bosco, si sentiva indomabile, come prima di compiere un atto grandioso; come prima di un giorno grandioso.</p>
         </div>
         """,
         unsafe_allow_html=True,
