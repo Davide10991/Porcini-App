@@ -239,11 +239,14 @@ st.markdown(
     }
     .hero { text-align: center; }
     .hero-title {
-        display: flex; align-items: center; justify-content: center; gap: 12px;
-        margin: 0;
+        display: grid;
+        grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
+        align-items: center;
+        width: 100%;
+        margin: 0 auto;
     }
-    .hero-fungo { font-size: clamp(1.8rem, 6vw, 2.6rem); line-height: 1; }
-    .hero h1 { font-size: clamp(2.1rem, 7vw, 3.1rem); margin: 0; line-height: 1.05; }
+    .hero-fungo { font-size: clamp(1.6rem, 5vw, 2.4rem); line-height: 1; text-align: center; }
+    .hero h1 { font-size: clamp(1.7rem, 6.2vw, 3.1rem); margin: 0; line-height: 1.05; text-align: center; }
     .hero .kicker { letter-spacing: .28em; text-transform: uppercase; font-size: .68rem; color: #e8d7b0 !important; margin: 0 0 8px; }
     .hero .lede { max-width: 40rem; opacity: .9; margin: 10px auto 0; line-height: 1.45; }
     .hero .chip-row { justify-content: center; }
