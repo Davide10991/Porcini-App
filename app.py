@@ -3437,6 +3437,20 @@ with col1:
     st.subheader("Mappa delle zone")
     if risultati_view:
         m = folium.Map(location=[41.7, 14.0], zoom_start=7)
+        try:
+            folium.WmsTileLayer(
+                url="https://radar-geowebcache.protezionecivile.it/service/wms",
+                layers="radar:vmi",
+                fmt="image/png",
+                transparent=True,
+                name="Radar Protezione Civile",
+                overlay=True,
+                control=True,
+                opacity=0.62,
+            ).add_to(m)
+            folium.LayerControl(collapsed=True).add_to(m)
+        except Exception:
+            pass
         for r in risultati_view:
             color = (
                 "green" if r["score"] >= 70
@@ -3547,11 +3561,9 @@ with col2:
 
 st.markdown("---")
 st.subheader("Pioggia live")
-st.caption("Radar in tempo reale sul Centro Italia. I mm di oggi sotto arrivano dalle stazioni usate nel Calcola.")
-st.components.v1.iframe(
-    "https://www.rainviewer.com/map.html?loc=42.15,13.35,7&oFa=0&oC=1&oU=0&oCS=1&oF=0&oAP=1&rmt=4&color=5&c=1&o=90&lm=1&th=0&sm=1&sn=1",
-    height=420,
-)
+st.caption("Radar ufficiale Dipartimento della Protezione Civile. Se la mappa sotto non parte, apri il sito.")
+st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
+st.components.v1.iframe("https://radar.protezionecivile.it/", height=520)
 oggi_txt = datetime.now().strftime("%Y-%m-%d")
 live_rows = []
 visti_staz = set()
@@ -3585,7 +3597,7 @@ for r in risultati_view:
     })
 if live_rows:
     st.dataframe(pd.DataFrame(live_rows), width="stretch", hide_index=True)
-st.markdown("[Apri radar a schermo intero](https://www.rainviewer.com/map.html?loc=42.15,13.35,7)")
+st.caption("Fonte radar: Dipartimento della Protezione Civile — radar.protezionecivile.it")
 
 st.markdown("---")
 st.subheader("🍄‍🟫 Tabella e export")
