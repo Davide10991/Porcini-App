@@ -181,7 +181,10 @@ st.markdown(
     .hero-fungo { font-size: clamp(1.6rem, 5vw, 2.4rem); text-align: center; }
     .hero h1 { font-size: clamp(1.7rem, 6.2vw, 3.1rem); margin: 0; text-align: center; }
     .hero .kicker { letter-spacing: .28em; text-transform: uppercase; font-size: .68rem; color: #b7e0b0 !important; margin: 0 0 8px; font-family: 'Syne', sans-serif !important; }
-    .hero .lede { max-width: 40rem; opacity: .92; margin: 10px auto 0; line-height: 1.45; }
+    .hero .lede, .login-card .lede {
+        max-width: 22rem; opacity: .95; margin: 12px auto 0; line-height: 1.4;
+        text-align: center !important; font-size: .95rem;
+    }
     .hero .chip-row { justify-content: center; }
     .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
     .chip {
@@ -246,8 +249,7 @@ if not st.session_state["app_ok"]:
         <div class="login-card">
           <p class="kicker">Centro · Sud Italia</p>
           <h1>Boletus Map</h1>
-          <p>Mappa interattiva crescita Boletus</p>
-          <p>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
+          <p class="lede">Mappa interattiva crescita Boletus<br>&amp;<br>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
           <div class="chip-row">
             <span class="chip">Abruzzo</span>
             <span class="chip">Molise</span>
@@ -3254,8 +3256,7 @@ st.markdown(
         <h1>Boletus Map</h1>
         <span class="hero-fungo">🍄‍🟫</span>
       </div>
-      <p class="lede">Mappa interattiva crescita Boletus</p>
-      <p class="lede">Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
+      <p class="lede">Mappa interattiva crescita Boletus<br>&amp;<br>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
       <div class="chip-row">
         <span class="chip">Abruzzo</span>
         <span class="chip">Molise</span>
