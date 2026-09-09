@@ -1761,14 +1761,14 @@ def _wc_evolution(device_id, variable):
         return {}
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=90)
 def wc_mese_mm(device_id):
     """Solo mm WC (801), per confrontare in fretta."""
     vals = _wc_evolution(device_id, "801")
     recs = []
     for ts, payload in (vals or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date() + timedelta(days=1)
             stats = ((payload or {}).get("801") or {}).get("stats") or {}
             mm = stats.get("total")
             if mm is None:
@@ -1781,16 +1781,16 @@ def wc_mese_mm(device_id):
     return pd.DataFrame(recs).sort_values("date")
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=90)
 def wc_mese_pioggia(device_id):
-    """Mese WC: mm (801) + T (101) + vento raffica (541/521, m/s → km/h)."""
+    """Mese WC: mm (801) + T (101) + vento raffica (541/521, m/s → km/h). Date = sito WC."""
     vals_r = _wc_evolution(device_id, "801")
     vals_t = _wc_evolution(device_id, "101")
     vals_v = _wc_evolution(device_id, "541")
     by_day = {}
     for ts, payload in (vals_r or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date() + timedelta(days=1)
             stats = ((payload or {}).get("801") or {}).get("stats") or {}
             mm = stats.get("total")
             if mm is None:
@@ -1800,7 +1800,7 @@ def wc_mese_pioggia(device_id):
             continue
     for ts, payload in (vals_t or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date() + timedelta(days=1)
             stats = ((payload or {}).get("101") or {}).get("stats") or {}
             rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
             if stats.get("max") is not None:
@@ -1813,7 +1813,7 @@ def wc_mese_pioggia(device_id):
             continue
     for ts, payload in (vals_v or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date() + timedelta(days=1)
             rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
             payload = payload or {}
             raffica = ((payload.get("521") or {}).get("stats") or {}).get("max")
