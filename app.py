@@ -2576,6 +2576,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     if cat_mn:
         vicine_pub = []
         nome_l0 = (nome_zona or "").lower()
+        if "bojano" in nome_l0 or "boiano" in nome_l0:
+            vicine_pub.append({
+                "code": "mls076",
+                "nome": "Loc.Massari - Bojano (CB)",
+                "lat": 41.486,
+                "lon": 14.455,
+                "distanza_km": round(distanza_km(lat, lon, 41.486, 14.455), 1),
+            })
         if "amatrice" in nome_l0:
             vicine_pub.append({
                 "code": "laz201",
@@ -2633,6 +2641,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 or str(s.get("code") or "").lower() in {"mls052", "mls064"}
             ):
                 s = prefer["mls071"]
+            if ("bojano" in nome_l or "boiano" in nome_l) and "mls076" in prefer:
+                s = prefer["mls076"]
             mesi_arch = 3 if str(s.get("code") or "").lower() == "laz201" else 2
             df_mn = mn_archivio_pubblico(s["code"], mesi_arch)
             if df_mn is None and mn_token:
