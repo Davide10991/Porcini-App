@@ -4,6 +4,8 @@ import requests
 import re
 import base64
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+TZ_ROMA = ZoneInfo("Europe/Rome")
 from math import radians, sin, cos, sqrt, atan2, exp
 import io
 import gzip
@@ -1766,7 +1768,7 @@ def wc_mese_mm(device_id):
     recs = []
     for ts, payload in (vals or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts)).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
             stats = ((payload or {}).get("801") or {}).get("stats") or {}
             mm = stats.get("total")
             if mm is None:
@@ -1788,7 +1790,7 @@ def wc_mese_pioggia(device_id):
     by_day = {}
     for ts, payload in (vals_r or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts)).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
             stats = ((payload or {}).get("801") or {}).get("stats") or {}
             mm = stats.get("total")
             if mm is None:
@@ -1798,7 +1800,7 @@ def wc_mese_pioggia(device_id):
             continue
     for ts, payload in (vals_t or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts)).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
             stats = ((payload or {}).get("101") or {}).get("stats") or {}
             rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
             if stats.get("max") is not None:
@@ -1811,7 +1813,7 @@ def wc_mese_pioggia(device_id):
             continue
     for ts, payload in (vals_v or {}).items():
         try:
-            dt = datetime.fromtimestamp(int(ts)).date()
+            dt = datetime.fromtimestamp(int(ts), tz=TZ_ROMA).date()
             rec = by_day.setdefault(dt, {"date": pd.Timestamp(dt), "precip": 0.0})
             payload = payload or {}
             raffica = ((payload.get("521") or {}).get("stats") or {}).get("max")
@@ -1831,10 +1833,11 @@ def wc_mese_pioggia(device_id):
                 packed[k] = rec[k]
         store[key] = packed
     oggi = datetime.now().date()
+    inizio_api = min(by_day.keys()) if by_day else oggi
     for i in range(40):
         d = oggi - timedelta(days=i)
         key = f"wc:{did}|{d.isoformat()}"
-        if d in by_day or key not in store:
+        if d >= inizio_api or key not in store:
             continue
         old = store.get(key) or {}
         rec = {"date": pd.Timestamp(d), "precip": float(old.get("precip") or 0)}
