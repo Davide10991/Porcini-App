@@ -2977,7 +2977,46 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             info["pioggia_stazione_30g"] = _mm(df_st)
             return df_st, info, forecast, soil, vento
 
-    info["fonte"] = "Nessuna stazione MeteoNetwork/Caput Frigoris nel raggio"
+    # Zona scoperta: usa la rete realtime MN (stazione più vicina, anche oltre 8 km)
+    if cat_mn_pre and mn_near and mn_min <= 20:
+        s = dict(mn_near)
+        s["distanza_km"] = round(mn_min, 1)
+        df_fb = mn_archivio_pubblico(s.get("code"), 2)
+        if df_fb is None or not len(df_fb):
+            rows = []
+            if s.get("oggi_mm") is not None:
+                rows.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
+            if s.get("mese_mm") is not None and float(s.get("mese_mm") or 0) > 0:
+                resto = max(0.0, float(s["mese_mm"]) - float(s.get("oggi_mm") or 0))
+                if resto > 0:
+                    rows.append({
+                        "date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=15),
+                        "precip": resto,
+                    })
+            df_fb = pd.DataFrame(rows) if rows else None
+        else:
+            df_fb = df_fb.copy()
+            df_fb["date"] = pd.to_datetime(df_fb["date"], errors="coerce")
+            df_fb = df_fb.dropna(subset=["date"])
+            if s.get("oggi_mm") is not None:
+                oggi_d = pd.Timestamp(datetime.now().date())
+                if (df_fb["date"].dt.normalize() == oggi_d).any():
+                    df_fb.loc[df_fb["date"].dt.normalize() == oggi_d, "precip"] = float(s["oggi_mm"])
+                else:
+                    df_fb = pd.concat([df_fb, pd.DataFrame([{"date": oggi_d, "precip": float(s["oggi_mm"])}])], ignore_index=True)
+        if df_fb is not None and len(df_fb):
+            fonte = (
+                f"Mappa realtime MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                + " · nessuna stazione entro 8 km"
+                + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
+                + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+            )
+            info = _info_stazione(s, fonte)
+            info["giorni_pluviometro"] = _giorni_lista(df_fb)
+            info["pioggia_stazione_30g"] = _mm(df_fb)
+            return df_fb, info, forecast, soil, vento
+
+    info["fonte"] = "Nessuna stazione MeteoNetwork/WeatherCloud nel raggio"
     return None, info, forecast, soil, vento
 
 
@@ -3478,14 +3517,14 @@ with st.sidebar:
     st.markdown("**Regioni da calcolare**")
     c1, c2, c3 = st.columns(3)
     with c1:
-        r_abr = st.checkbox("Abruzzo", value=False)
+        r_abr = st.checkbox("Abruzzo", value=True)
         r_mol = st.checkbox("Molise", value=True)
     with c2:
-        r_laz = st.checkbox("Lazio", value=False)
-        r_cam = st.checkbox("Campania", value=False)
+        r_laz = st.checkbox("Lazio", value=True)
+        r_cam = st.checkbox("Campania", value=True)
     with c3:
-        r_mar = st.checkbox("Marche", value=False)
-        r_umb = st.checkbox("Umbria", value=False)
+        r_mar = st.checkbox("Marche", value=True)
+        r_umb = st.checkbox("Umbria", value=True)
     regioni_sel = [n for n, on in (
         ("Abruzzo", r_abr), ("Molise", r_mol), ("Lazio", r_laz),
         ("Campania", r_cam), ("Marche", r_mar), ("Umbria", r_umb),
