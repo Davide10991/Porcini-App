@@ -2863,6 +2863,32 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                         extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
                         serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
             n_gg = int(df_mn["precip"].notna().sum()) if df_mn is not None and len(df_mn) else 0
+            ha_wc_8 = False
+            if usa_wc:
+                try:
+                    for stw in wc_catalogo() or []:
+                        if distanza_km(lat, lon, stw["lat"], stw["lon"]) <= 8.0:
+                            ha_wc_8 = True
+                            break
+                except Exception:
+                    ha_wc_8 = False
+            if n_gg < 18 and not ha_wc_8 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
+                rows_m = []
+                if s.get("oggi_mm") is not None:
+                    rows_m.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
+                serie = pd.DataFrame(rows_m) if rows_m else pd.DataFrame({"date": [], "precip": []})
+                fonte = (
+                    f"Mappe giornaliere MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                    + " · archivio MN con buchi, niente WC vicina"
+                    + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
+                    + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+                )
+                info = _info_stazione(s, fonte)
+                info["giorni_pluviometro"] = _giorni_lista(serie) if len(serie) else [
+                    f"mese rete MN: {s.get('mese_mm')} mm"
+                ]
+                info["pioggia_stazione_30g"] = float(s["mese_mm"]) if s.get("mese_mm") is not None else _mm(serie)
+                return serie, info, forecast, soil, vento
             fonte = (
                 f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
                 + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
