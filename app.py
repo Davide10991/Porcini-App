@@ -3512,8 +3512,17 @@ with col1:
         st.caption("Radar Protezione Civile e mappe giornaliere MeteoNetwork. Se un riquadro è vuoto, apri il sito.")
         st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
         st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
-        st.markdown("[Apri mappe realtime MeteoNetwork](https://www.meteonetwork.eu/it/mappe-realtime)")
-        st.components.v1.iframe("https://www.meteonetwork.eu/it/mappe-realtime", height=480)
+        st.markdown("[Apri mappe giornaliere MeteoNetwork (consigliato su iPhone)](https://www.meteonetwork.eu/it/mappe-realtime)")
+        st.components.v1.html(
+            """
+            <div style="width:100%;height:820px;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:16px;">
+              <iframe src="https://www.meteonetwork.eu/it/mappe-realtime"
+                style="width:100%;height:1800px;border:0;"
+                scrolling="yes"></iframe>
+            </div>
+            """,
+            height=840,
+        )
     else:
         st.info("Nessuna zona sopra la soglia scelta.")
 
