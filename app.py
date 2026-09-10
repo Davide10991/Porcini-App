@@ -3467,9 +3467,6 @@ kpi2.metric("🟢 Alto", n_alto)
 kpi3.metric("🟡 Medio", n_medio)
 kpi4.metric("Top zona", f"{best['score']:.0f}" if best else "—", best["nome"] if best else "")
 
-soglia = st.slider("Mostra solo zone con punteggio ≥", 0, 90, 0, 5)
-risultati_view = [r for r in risultati_view if r["score"] >= soglia]
-
 col1, col2 = st.columns([1.4, 1])
 
 with col1:
@@ -3547,7 +3544,7 @@ with col1:
                 height=840,
             )
     else:
-        st.info("Nessuna zona sopra la soglia scelta.")
+        st.info("Nessuna zona da mostrare. Controlla i filtri in sidebar.")
 
 with col2:
     st.subheader("Classifica zone")
