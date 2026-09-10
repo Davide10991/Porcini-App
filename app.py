@@ -34,7 +34,7 @@ st.set_page_config(
 
 ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
-GUEST_PASS = "Porcino1"
+GUEST_PASS = "Davide1099!"
 
 if "app_ok" not in st.session_state:
     st.session_state["app_ok"] = False
