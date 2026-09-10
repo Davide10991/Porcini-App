@@ -2273,7 +2273,29 @@ def cf_scheda(station_id):
     m = re.search(r"<title>([^<]+)", t, flags=re.I)
     if m:
         nome = m.group(1).split("-")[0].replace("Stazione:", "").strip() or station_id
-    return {"id": station_id, "nome": nome, "oggi_mm": oggi, "mese_mm": mese, "anno_mm": anno}
+    t_max = t_min = t_med = vento = None
+    try:
+        mmax = re.search(r"Max[^\d]{0,40}(\d+(?:[.,]\d+)?)\s*°C", t, flags=re.I)
+        mmin = re.search(r"Min[^\d]{0,40}(\d+(?:[.,]\d+)?)\s*°C", t, flags=re.I)
+        if mmax:
+            t_max = float(mmax.group(1).replace(",", "."))
+        if mmin:
+            t_min = float(mmin.group(1).replace(",", "."))
+        if t_max is not None and t_min is not None:
+            t_med = round((t_max + t_min) / 2, 1)
+    except Exception:
+        pass
+    try:
+        mv = re.search(r"(\d+(?:[.,]\d+)?)\s*km/h", t, flags=re.I)
+        if mv:
+            vento = float(mv.group(1).replace(",", "."))
+    except Exception:
+        pass
+    return {
+        "id": station_id, "nome": nome,
+        "oggi_mm": oggi, "mese_mm": mese, "anno_mm": anno,
+        "t_max": t_max, "t_min": t_min, "t_med": t_med, "vento_max": vento,
+    }
 
 
 @st.cache_data(ttl=3600)
@@ -2491,8 +2513,43 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 rows.append(rec)
             except Exception:
                 pass
+        oggi_d = datetime.now().date().isoformat()
         if cf.get("oggi_mm") is not None:
-            rows.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(cf.get("oggi_mm") or 0)})
+            rec_oggi = {
+                "date": oggi_d,
+                "precip": float(cf.get("oggi_mm") or 0),
+            }
+            for kk in ("t_max", "t_min", "t_med", "vento_max"):
+                if cf.get(kk) is not None:
+                    rec_oggi[kk] = cf[kk]
+            store[f"{cf_id}|{oggi_d}"] = rec_oggi
+            ieri = (datetime.now().date() - timedelta(days=1)).isoformat()
+            if cf.get("mese_mm") is not None:
+                mese_cf = float(cf["mese_mm"])
+                oggi_mm = float(cf.get("oggi_mm") or 0)
+                somma_mese = 0.0
+                for k, v in store.items():
+                    if not str(k).startswith(pref):
+                        continue
+                    d = str((v or {}).get("date") or k.split("|", 1)[-1])[:10]
+                    if d[:7] == oggi_d[:7] and d != ieri:
+                        try:
+                            somma_mese += float((v or {}).get("precip") or 0)
+                        except Exception:
+                            pass
+                resto = round(mese_cf - somma_mese, 1)
+                if resto >= 0.2:
+                    rec_ieri = {"date": ieri, "precip": resto}
+                    if f"{cf_id}|{ieri}" not in store:
+                        store[f"{cf_id}|{ieri}"] = rec_ieri
+                        rows.append({"date": pd.Timestamp(ieri), "precip": resto})
+            st.session_state["mn_giorni"] = store
+            _salva_giorni_file()
+            rows.append({
+                "date": pd.Timestamp(oggi_d),
+                "precip": rec_oggi["precip"],
+                **{k: rec_oggi[k] for k in ("t_max", "t_min", "t_med", "vento_max") if k in rec_oggi},
+            })
         df_cf = None
         if rows:
             df_cf = pd.DataFrame(rows).drop_duplicates("date").sort_values("date")
