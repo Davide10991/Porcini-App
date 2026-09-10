@@ -3450,7 +3450,6 @@ risultati_view = [r for r in risultati_view if r["score"] >= soglia]
 col1, col2 = st.columns([1.4, 1])
 
 with col1:
-    st.subheader("Mappa delle zone")
     if risultati_view:
         m = folium.Map(location=[41.7, 14.0], zoom_start=7)
         for r in risultati_view:
@@ -3507,22 +3506,23 @@ with col1:
                 tooltip=f"{r['nome']} · {r['score']:.0f}",
                 popup=folium.Popup(popup_html, max_width=260),
             ).add_to(m)
-        st_folium(m, width=700, height=520, returned_objects=[])
-        st.subheader("Pioggia live")
-        st.caption("Radar Protezione Civile e mappe giornaliere MeteoNetwork. Se un riquadro è vuoto, apri il sito.")
-        st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
-        st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
-        st.markdown("[Apri mappe giornaliere MeteoNetwork (consigliato su iPhone)](https://www.meteonetwork.eu/it/mappe-realtime)")
-        st.components.v1.html(
-            """
-            <div style="width:100%;height:820px;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:16px;">
-              <iframe src="https://www.meteonetwork.eu/it/mappe-realtime"
-                style="width:100%;height:1800px;border:0;"
-                scrolling="yes"></iframe>
-            </div>
-            """,
-            height=840,
-        )
+        with st.expander("Mappa delle zone", expanded=True):
+            st_folium(m, width=700, height=520, returned_objects=[])
+        with st.expander("Radar Protezione Civile", expanded=False):
+            st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
+            st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
+        with st.expander("Mappe giornaliere MeteoNetwork", expanded=False):
+            st.markdown("[Apri mappe giornaliere MeteoNetwork](https://www.meteonetwork.eu/it/mappe-realtime)")
+            st.components.v1.html(
+                """
+                <div style="width:100%;height:820px;overflow:auto;-webkit-overflow-scrolling:touch;border-radius:16px;">
+                  <iframe src="https://www.meteonetwork.eu/it/mappe-realtime"
+                    style="width:100%;height:1800px;border:0;"
+                    scrolling="yes"></iframe>
+                </div>
+                """,
+                height=840,
+            )
     else:
         st.info("Nessuna zona sopra la soglia scelta.")
 
