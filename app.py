@@ -384,14 +384,14 @@ PUNTI = [
     {"nome": "Frentani - Gessopalena", "lat": 42.055, "lon": 14.273, "tipo": "castagno", "quota": 650, "regione": "Abruzzo"},
     {"nome": "Frentani - Torricella Peligna", "lat": 42.025, "lon": 14.259, "tipo": "castagno", "quota": 750, "regione": "Abruzzo"},
     # Val di Sangro / Costa dei Trabocchi / Vastese (macrozona Atessa-Gissi-Vasto)
-    {"nome": "Lecceta di Torino di Sangro", "lat": 42.227, "lon": 14.548, "tipo": "quercia", "quota": 80, "regione": "Abruzzo"},
+    {"nome": "Lecceta di Torino di Sangro", "lat": 42.227, "lon": 14.548, "tipo": "leccio", "quota": 80, "regione": "Abruzzo"},
     {"nome": "Boschi ripariali Fiume Osento", "lat": 42.167, "lon": 14.531, "tipo": "quercia", "quota": 80, "regione": "Abruzzo"},
     {"nome": "Bosco di Don Venanzio - Pollutri", "lat": 42.138, "lon": 14.615, "tipo": "quercia", "quota": 30, "regione": "Abruzzo"},
     {"nome": "Punta Aderci - foce Sinello", "lat": 42.175, "lon": 14.678, "tipo": "quercia", "quota": 25, "regione": "Abruzzo"},
     {"nome": "Bosco di Mozzagrogna / Sangro", "lat": 42.164, "lon": 14.448, "tipo": "quercia", "quota": 120, "regione": "Abruzzo"},
     {"nome": "Atessa - Fontecampana / Vallaspra", "lat": 42.070, "lon": 14.430, "tipo": "quercia", "quota": 400, "regione": "Abruzzo"},
     {"nome": "Monte Pallano - crinale", "lat": 42.038, "lon": 14.405, "tipo": "faggio", "quota": 950, "regione": "Abruzzo"},
-    {"nome": "Monte Pallano - Lecceta Isca d'Archi", "lat": 42.090, "lon": 14.380, "tipo": "quercia", "quota": 450, "regione": "Abruzzo"},
+    {"nome": "Monte Pallano - Lecceta Isca d'Archi", "lat": 42.090, "lon": 14.380, "tipo": "leccio", "quota": 450, "regione": "Abruzzo"},
     {"nome": "Tornareccio - cerrete Pallano", "lat": 42.030, "lon": 14.420, "tipo": "quercia", "quota": 600, "regione": "Abruzzo"},
     {"nome": "Bomba - versante Pallano", "lat": 42.033, "lon": 14.367, "tipo": "quercia", "quota": 450, "regione": "Abruzzo"},
     {"nome": "Archi - Isca d'Archi", "lat": 42.090, "lon": 14.381, "tipo": "quercia", "quota": 440, "regione": "Abruzzo"},
@@ -401,7 +401,7 @@ PUNTI = [
     {"nome": "Carunchio - Bosco Carunchino", "lat": 41.910, "lon": 14.530, "tipo": "quercia", "quota": 700, "regione": "Abruzzo"},
     {"nome": "Palmoli - Fiume Treste", "lat": 41.940, "lon": 14.580, "tipo": "quercia", "quota": 650, "regione": "Abruzzo"},
     {"nome": "San Buono - Frentani", "lat": 41.981, "lon": 14.571, "tipo": "quercia", "quota": 480, "regione": "Abruzzo"},
-    {"nome": "Casoli - Lecceta Colleforeste", "lat": 42.120, "lon": 14.290, "tipo": "quercia", "quota": 350, "regione": "Abruzzo"},
+    {"nome": "Casoli - Lecceta Colleforeste", "lat": 42.120, "lon": 14.290, "tipo": "leccio", "quota": 350, "regione": "Abruzzo"},
     {"nome": "Fossacesia - collina Trabocchi", "lat": 42.250, "lon": 14.450, "tipo": "quercia", "quota": 80, "regione": "Abruzzo"},
     {"nome": "Casalbordino - collina Osento", "lat": 42.150, "lon": 14.590, "tipo": "quercia", "quota": 200, "regione": "Abruzzo"},
     {"nome": "Scerni - querceti", "lat": 42.110, "lon": 14.570, "tipo": "quercia", "quota": 250, "regione": "Abruzzo"},
@@ -818,7 +818,7 @@ PUNTI = [
     {"nome": "Serra Sant'Abbondio - Catria", "lat": 43.488, "lon": 12.771, "tipo": "faggio", "quota": 750, "regione": "Marche"},
     {"nome": "Pergola - colline cesane", "lat": 43.562, "lon": 12.837, "tipo": "quercia", "quota": 350, "regione": "Marche"},
     {"nome": "Urbino - Cesane", "lat": 43.726, "lon": 12.636, "tipo": "quercia", "quota": 450, "regione": "Marche"},
-    {"nome": "Monte Conero - Sirolo", "lat": 43.522, "lon": 13.601, "tipo": "quercia", "quota": 350, "regione": "Marche"},
+    {"nome": "Monte Conero - Sirolo", "lat": 43.522, "lon": 13.601, "tipo": "leccio", "quota": 350, "regione": "Marche"},
     {"nome": "Filottrano - colline", "lat": 43.438, "lon": 13.351, "tipo": "quercia", "quota": 250, "regione": "Marche"},
     {"nome": "Cingoli - querceti", "lat": 43.359, "lon": 13.208, "tipo": "quercia", "quota": 450, "regione": "Marche"},
     {"nome": "San Ginesio - colline", "lat": 43.107, "lon": 13.321, "tipo": "quercia", "quota": 600, "regione": "Marche"},
@@ -864,6 +864,18 @@ PUNTI = [
     {"nome": "Norcia - Piano di Santa Scolastica", "lat": 42.793, "lon": 13.094, "tipo": "castagno", "quota": 650, "regione": "Umbria"},
     {"nome": "Valnerina - abetine Cerreto", "lat": 42.822, "lon": 12.917, "tipo": "abete_bianco", "quota": 1000, "regione": "Umbria"},
     {"nome": "Monte Cucco - abetine Pian delle Macinare", "lat": 43.350, "lon": 12.740, "tipo": "abete_bianco", "quota": 1100, "regione": "Umbria"},
+    {"nome": "Frentani - misto carpino Gessopalena", "lat": 42.055, "lon": 14.273, "tipo": "misto_carpino_quercia", "quota": 650, "regione": "Abruzzo"},
+    {"nome": "Vastese - misto carpino Carpineto", "lat": 41.965, "lon": 14.534, "tipo": "misto_carpino_quercia", "quota": 700, "regione": "Abruzzo"},
+    {"nome": "Cerreto sul Volturno - misto", "lat": 41.659, "lon": 14.102, "tipo": "misto_carpino_quercia", "quota": 600, "regione": "Molise"},
+    {"nome": "Pescolanciano - cerrete miste", "lat": 41.680, "lon": 14.248, "tipo": "misto_carpino_quercia", "quota": 800, "regione": "Molise"},
+    {"nome": "Simbruini - misto carpino Subiaco", "lat": 41.925, "lon": 13.110, "tipo": "misto_carpino_quercia", "quota": 600, "regione": "Lazio"},
+    {"nome": "Cimini - misto Viterbo", "lat": 42.408, "lon": 12.180, "tipo": "misto_carpino_quercia", "quota": 550, "regione": "Lazio"},
+    {"nome": "Roccamonfina - lecceta", "lat": 41.297, "lon": 13.972, "tipo": "leccio", "quota": 400, "regione": "Campania"},
+    {"nome": "Matese basso - misto Alife", "lat": 41.326, "lon": 14.334, "tipo": "misto_carpino_quercia", "quota": 250, "regione": "Campania"},
+    {"nome": "Furlo - misto carpino", "lat": 43.627, "lon": 12.675, "tipo": "misto_carpino_quercia", "quota": 400, "regione": "Marche"},
+    {"nome": "Genga / Frasassi - lecceta", "lat": 43.430, "lon": 12.935, "tipo": "leccio", "quota": 400, "regione": "Marche"},
+    {"nome": "Amerini - misto Amelia", "lat": 42.553, "lon": 12.416, "tipo": "misto_carpino_quercia", "quota": 400, "regione": "Umbria"},
+    {"nome": "Orvieto - lecceta", "lat": 42.718, "lon": 12.110, "tipo": "leccio", "quota": 350, "regione": "Umbria"},
 ]
 
 # Stazioni ufficiali (WMO / Aeronautica / aeroporti) nelle 4 regioni e dintorni
@@ -2976,12 +2988,14 @@ def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
         "faggio": ["estatino", "edulis", "pinicola"],
         "castagno": ["estatino", "edulis", "pinicola", "aereus"],
         "quercia": ["estatino", "aereus", "edulis"],
+        "leccio": ["aereus", "estatino", "edulis"],
+        "misto_carpino_quercia": ["estatino", "aereus", "edulis"],
         "abete_bianco": ["pinicola", "edulis", "estatino"],
         "abete_rosso": ["pinicola", "edulis"],
     }
     possibili = list(base.get(tipo, ["estatino", "edulis"]))
     # Centro-Sud: aereus su quercia/castagno, non in faggeta
-    if tipo == "quercia" and t < 18:
+    if tipo in ("quercia", "leccio", "misto_carpino_quercia") and t < 18:
         if "pinicola" not in possibili:
             possibili.append("pinicola")
 
@@ -3471,16 +3485,20 @@ with st.sidebar:
         ("Campania", r_cam), ("Marche", r_mar), ("Umbria", r_umb),
     ) if on]
     st.markdown("**Tipo di bosco**")
-    t1, t2 = st.columns(2)
+    t1, t2, t3 = st.columns(3)
     with t1:
         t_fag = st.checkbox("Faggio", value=True)
         t_cas = st.checkbox("Castagno", value=True)
         t_que = st.checkbox("Quercia", value=True)
     with t2:
+        t_lec = st.checkbox("Leccio", value=True)
+        t_mis = st.checkbox("Misto carpino-quercia", value=True)
+    with t3:
         t_ab = st.checkbox("Abete bianco", value=True)
         t_ar = st.checkbox("Abete rosso", value=True)
     tipi_sel = [k for k, on in (
         ("faggio", t_fag), ("castagno", t_cas), ("quercia", t_que),
+        ("leccio", t_lec), ("misto_carpino_quercia", t_mis),
         ("abete_bianco", t_ab), ("abete_rosso", t_ar),
     ) if on]
     quota_range = st.slider("Quota (m)", 0, 1800, (0, 1800), step=50)
