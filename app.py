@@ -34,7 +34,7 @@ st.set_page_config(
 
 ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
-GUEST_PASS = "Davide1099"
+GUEST_PASS = "Porcino1"
 
 if "app_ok" not in st.session_state:
     st.session_state["app_ok"] = False
@@ -277,7 +277,7 @@ if not st.session_state["app_ok"]:
     st.markdown(
         """
         <div class="login-card">
-          <p class="kicker">Centro · Sud Italia</p>
+          <p class="kicker">Centro Italia</p>
           <h1>Boletus Map</h1>
           <p class="lede">Mappa interattiva crescita Boletus<br>&amp;<br>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
           <div class="chip-row">
@@ -285,6 +285,8 @@ if not st.session_state["app_ok"]:
             <span class="chip">Molise</span>
             <span class="chip">Lazio</span>
             <span class="chip">Campania</span>
+            <span class="chip">Marche</span>
+            <span class="chip">Umbria</span>
           </div>
         </div>
         """,
@@ -779,6 +781,89 @@ PUNTI = [
     {"nome": "Terminillo - rimboschimenti abete", "lat": 42.473, "lon": 12.997, "tipo": "abete_rosso", "quota": 1600, "regione": "Lazio"},
     {"nome": "Monti della Duchessa - conifere", "lat": 42.180, "lon": 13.330, "tipo": "abete_rosso", "quota": 1500, "regione": "Lazio"},
     {"nome": "Matese - rimboschimenti abete", "lat": 41.460, "lon": 14.380, "tipo": "abete_rosso", "quota": 1400, "regione": "Campania"},
+    # Marche
+    {"nome": "Sibillini - Ussita", "lat": 42.944, "lon": 13.166, "tipo": "faggio", "quota": 1200, "regione": "Marche"},
+    {"nome": "Sibillini - Visso", "lat": 42.931, "lon": 13.088, "tipo": "faggio", "quota": 1100, "regione": "Marche"},
+    {"nome": "Sibillini - Castelsantangelo sul Nera", "lat": 42.895, "lon": 13.153, "tipo": "faggio", "quota": 1300, "regione": "Marche"},
+    {"nome": "Sibillini - Bolognola", "lat": 42.993, "lon": 13.228, "tipo": "faggio", "quota": 1400, "regione": "Marche"},
+    {"nome": "Sibillini - Fiastra / Lago", "lat": 43.037, "lon": 13.169, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Sibillini - Sarnano", "lat": 43.035, "lon": 13.237, "tipo": "faggio", "quota": 850, "regione": "Marche"},
+    {"nome": "Sibillini - Amandola", "lat": 42.980, "lon": 13.353, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Sibillini - Montefortino", "lat": 42.943, "lon": 13.340, "tipo": "faggio", "quota": 1100, "regione": "Marche"},
+    {"nome": "Sibillini - Montemonaco", "lat": 42.898, "lon": 13.330, "tipo": "faggio", "quota": 1200, "regione": "Marche"},
+    {"nome": "Sibillini - Montegallo", "lat": 42.842, "lon": 13.332, "tipo": "faggio", "quota": 1100, "regione": "Marche"},
+    {"nome": "Laga Marche - Arquata del Tronto", "lat": 42.773, "lon": 13.296, "tipo": "faggio", "quota": 1200, "regione": "Marche"},
+    {"nome": "Laga Marche - Acquasanta Terme", "lat": 42.770, "lon": 13.410, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Monte Ceresa - Montegallo / Rocca", "lat": 42.855, "lon": 13.370, "tipo": "faggio", "quota": 1000, "regione": "Marche"},
+    {"nome": "Monte Catria - Frontone", "lat": 43.520, "lon": 12.738, "tipo": "faggio", "quota": 1100, "regione": "Marche"},
+    {"nome": "Monte Catria - Cantiano", "lat": 43.451, "lon": 12.628, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Monte Nerone - Piobbico", "lat": 43.588, "lon": 12.510, "tipo": "faggio", "quota": 1000, "regione": "Marche"},
+    {"nome": "Monte Nerone - Apecchio", "lat": 43.559, "lon": 12.418, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Monte Cucco Marche - Scheggia Passo", "lat": 43.404, "lon": 12.666, "tipo": "faggio", "quota": 800, "regione": "Marche"},
+    {"nome": "Montefeltro - Carpegna", "lat": 43.781, "lon": 12.333, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Montefeltro - Pennabilli", "lat": 43.817, "lon": 12.262, "tipo": "faggio", "quota": 800, "regione": "Marche"},
+    {"nome": "Alpe della Luna - Borgo Pace", "lat": 43.648, "lon": 12.293, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Alpe della Luna - Mercatello sul Metauro", "lat": 43.647, "lon": 12.336, "tipo": "faggio", "quota": 850, "regione": "Marche"},
+    {"nome": "Furlo - Acqualagna", "lat": 43.627, "lon": 12.675, "tipo": "quercia", "quota": 350, "regione": "Marche"},
+    {"nome": "Monte San Vicino - Apiro", "lat": 43.393, "lon": 13.131, "tipo": "faggio", "quota": 800, "regione": "Marche"},
+    {"nome": "Monte San Vicino - Cingoli", "lat": 43.374, "lon": 13.216, "tipo": "quercia", "quota": 600, "regione": "Marche"},
+    {"nome": "Genga / Frasassi", "lat": 43.430, "lon": 12.935, "tipo": "quercia", "quota": 400, "regione": "Marche"},
+    {"nome": "Fabriano - boschi Giano", "lat": 43.336, "lon": 12.904, "tipo": "castagno", "quota": 500, "regione": "Marche"},
+    {"nome": "Sassoferrato - Montelago", "lat": 43.436, "lon": 12.834, "tipo": "faggio", "quota": 700, "regione": "Marche"},
+    {"nome": "Camerino - castagneti", "lat": 43.136, "lon": 13.068, "tipo": "castagno", "quota": 650, "regione": "Marche"},
+    {"nome": "Muccia - Valle del Chienti", "lat": 43.082, "lon": 13.043, "tipo": "castagno", "quota": 550, "regione": "Marche"},
+    {"nome": "Pievebovigliana / Val di Fiastra", "lat": 43.123, "lon": 13.125, "tipo": "castagno", "quota": 550, "regione": "Marche"},
+    {"nome": "Sarnano - castagneti", "lat": 43.035, "lon": 13.251, "tipo": "castagno", "quota": 700, "regione": "Marche"},
+    {"nome": "Cagli - Monte Petrano", "lat": 43.547, "lon": 12.647, "tipo": "faggio", "quota": 900, "regione": "Marche"},
+    {"nome": "Serra Sant'Abbondio - Catria", "lat": 43.488, "lon": 12.771, "tipo": "faggio", "quota": 750, "regione": "Marche"},
+    {"nome": "Pergola - colline cesane", "lat": 43.562, "lon": 12.837, "tipo": "quercia", "quota": 350, "regione": "Marche"},
+    {"nome": "Urbino - Cesane", "lat": 43.726, "lon": 12.636, "tipo": "quercia", "quota": 450, "regione": "Marche"},
+    {"nome": "Monte Conero - Sirolo", "lat": 43.522, "lon": 13.601, "tipo": "quercia", "quota": 350, "regione": "Marche"},
+    {"nome": "Filottrano - colline", "lat": 43.438, "lon": 13.351, "tipo": "quercia", "quota": 250, "regione": "Marche"},
+    {"nome": "Cingoli - querceti", "lat": 43.359, "lon": 13.208, "tipo": "quercia", "quota": 450, "regione": "Marche"},
+    {"nome": "San Ginesio - colline", "lat": 43.107, "lon": 13.321, "tipo": "quercia", "quota": 600, "regione": "Marche"},
+    {"nome": "Amandola - castagneti", "lat": 42.980, "lon": 13.353, "tipo": "castagno", "quota": 700, "regione": "Marche"},
+    {"nome": "Sibillini - Pintura di Bolognola abeti", "lat": 42.995, "lon": 13.215, "tipo": "abete_bianco", "quota": 1450, "regione": "Marche"},
+    {"nome": "Catria - versante abetine", "lat": 43.462, "lon": 12.705, "tipo": "abete_bianco", "quota": 1300, "regione": "Marche"},
+    # Umbria
+    {"nome": "Sibillini Umbria - Norcia", "lat": 42.793, "lon": 13.094, "tipo": "faggio", "quota": 1100, "regione": "Umbria"},
+    {"nome": "Sibillini Umbria - Castelluccio", "lat": 42.829, "lon": 13.207, "tipo": "faggio", "quota": 1450, "regione": "Umbria"},
+    {"nome": "Valnerina - Preci", "lat": 42.880, "lon": 13.037, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Valnerina - Cerreto di Spoleto", "lat": 42.822, "lon": 12.917, "tipo": "faggio", "quota": 800, "regione": "Umbria"},
+    {"nome": "Valnerina - Sellano", "lat": 42.888, "lon": 12.923, "tipo": "faggio", "quota": 750, "regione": "Umbria"},
+    {"nome": "Valnerina - Cascia", "lat": 42.718, "lon": 13.013, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Monteleone di Spoleto", "lat": 42.651, "lon": 12.952, "tipo": "faggio", "quota": 950, "regione": "Umbria"},
+    {"nome": "Monte Cucco - Sigillo", "lat": 43.331, "lon": 12.742, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Monte Cucco - Costacciaro", "lat": 43.359, "lon": 12.712, "tipo": "faggio", "quota": 850, "regione": "Umbria"},
+    {"nome": "Monte Cucco - Scheggia", "lat": 43.404, "lon": 12.666, "tipo": "faggio", "quota": 700, "regione": "Umbria"},
+    {"nome": "Gubbio - Monte Ingino", "lat": 43.355, "lon": 12.578, "tipo": "faggio", "quota": 700, "regione": "Umbria"},
+    {"nome": "Gubbio - castagneti", "lat": 43.351, "lon": 12.573, "tipo": "castagno", "quota": 550, "regione": "Umbria"},
+    {"nome": "Pietralunga - Foresta", "lat": 43.437, "lon": 12.435, "tipo": "faggio", "quota": 650, "regione": "Umbria"},
+    {"nome": "Città di Castello - Alpe della Luna", "lat": 43.540, "lon": 12.240, "tipo": "faggio", "quota": 800, "regione": "Umbria"},
+    {"nome": "San Giustino - Monte Santa Maria", "lat": 43.547, "lon": 12.175, "tipo": "faggio", "quota": 700, "regione": "Umbria"},
+    {"nome": "Umbertide - colline Tevere", "lat": 43.306, "lon": 12.328, "tipo": "quercia", "quota": 350, "regione": "Umbria"},
+    {"nome": "Monte Tezio - Perugia", "lat": 43.198, "lon": 12.347, "tipo": "quercia", "quota": 650, "regione": "Umbria"},
+    {"nome": "Monte Subasio - Assisi", "lat": 43.074, "lon": 12.651, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Monte Subasio - Spello", "lat": 43.000, "lon": 12.672, "tipo": "quercia", "quota": 450, "regione": "Umbria"},
+    {"nome": "Colfiorito - Foligno", "lat": 43.027, "lon": 12.890, "tipo": "faggio", "quota": 800, "regione": "Umbria"},
+    {"nome": "Nocera Umbra - Monte Pennino", "lat": 43.115, "lon": 12.854, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Nocera Umbra - castagneti", "lat": 43.114, "lon": 12.786, "tipo": "castagno", "quota": 550, "regione": "Umbria"},
+    {"nome": "Spoleto - Monteluco", "lat": 42.724, "lon": 12.748, "tipo": "faggio", "quota": 750, "regione": "Umbria"},
+    {"nome": "Monti Martani - Massa Martana", "lat": 42.777, "lon": 12.525, "tipo": "quercia", "quota": 600, "regione": "Umbria"},
+    {"nome": "Monte Peglia - San Venanzo", "lat": 42.869, "lon": 12.268, "tipo": "quercia", "quota": 650, "regione": "Umbria"},
+    {"nome": "Orvieto - selva Querce", "lat": 42.718, "lon": 12.110, "tipo": "quercia", "quota": 350, "regione": "Umbria"},
+    {"nome": "Piegaro - boschi Nestore", "lat": 42.966, "lon": 12.085, "tipo": "quercia", "quota": 400, "regione": "Umbria"},
+    {"nome": "Trasimeno - Castiglione del Lago", "lat": 43.127, "lon": 12.045, "tipo": "quercia", "quota": 300, "regione": "Umbria"},
+    {"nome": "Trasimeno - Magione / Montecolognola", "lat": 43.143, "lon": 12.203, "tipo": "quercia", "quota": 350, "regione": "Umbria"},
+    {"nome": "Amerini - Amelia", "lat": 42.553, "lon": 12.416, "tipo": "quercia", "quota": 400, "regione": "Umbria"},
+    {"nome": "Narni - boschi Serra", "lat": 42.519, "lon": 12.515, "tipo": "quercia", "quota": 350, "regione": "Umbria"},
+    {"nome": "Terni - Monte Torre Maggiore", "lat": 42.620, "lon": 12.580, "tipo": "faggio", "quota": 900, "regione": "Umbria"},
+    {"nome": "Ferentillo - Valnerina bassa", "lat": 42.621, "lon": 12.791, "tipo": "castagno", "quota": 400, "regione": "Umbria"},
+    {"nome": "Scheggino - Valnerina", "lat": 42.712, "lon": 12.830, "tipo": "castagno", "quota": 450, "regione": "Umbria"},
+    {"nome": "Cascia - castagneti", "lat": 42.717, "lon": 13.013, "tipo": "castagno", "quota": 700, "regione": "Umbria"},
+    {"nome": "Norcia - Piano di Santa Scolastica", "lat": 42.793, "lon": 13.094, "tipo": "castagno", "quota": 650, "regione": "Umbria"},
+    {"nome": "Valnerina - abetine Cerreto", "lat": 42.822, "lon": 12.917, "tipo": "abete_bianco", "quota": 1000, "regione": "Umbria"},
+    {"nome": "Monte Cucco - abetine Pian delle Macinare", "lat": 43.350, "lon": 12.740, "tipo": "abete_bianco", "quota": 1100, "regione": "Umbria"},
 ]
 
 # Stazioni ufficiali (WMO / Aeronautica / aeroporti) nelle 4 regioni e dintorni
@@ -806,6 +891,10 @@ STAZIONI = [
     {"id": "16258", "nome": "Latina", "lat": 41.55, "lon": 12.90},
     {"id": "16244", "nome": "Pratica di Mare", "lat": 41.65, "lon": 12.45},
     {"id": "16280", "nome": "Frosinone", "lat": 41.64, "lon": 13.30},
+    {"id": "16191", "nome": "Ancona Falconara", "lat": 43.62, "lon": 13.36},
+    {"id": "16190", "nome": "Frontone", "lat": 43.52, "lon": 12.73},
+    {"id": "16181", "nome": "Perugia Sant'Egidio", "lat": 43.10, "lon": 12.50},
+    {"id": "16179", "nome": "Terminillo / Leonessa confine", "lat": 42.47, "lon": 12.99},
 ]
 
 
@@ -900,6 +989,8 @@ def mn_elenco_stazioni(token):
         ("https://api.meteonetwork.it/v3/stations", {"region": "Abruzzo"}),
         ("https://api.meteonetwork.it/v3/stations", {"region": "Lazio"}),
         ("https://api.meteonetwork.it/v3/stations", {"region": "Campania"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Marche"}),
+        ("https://api.meteonetwork.it/v3/stations", {"region": "Umbria"}),
         ("https://api.meteonetwork.it/v3/data-realtime", {"country": "IT", "region": "Molise"}),
     ]
     ultimo = "nessuna risposta"
@@ -2070,6 +2161,16 @@ FM_LOCALITA = {
         "terminillo", "leonessa", "cimini", "soratte", "simbruini", "subiaco",
         "ernici", "fiuggi", "lepini", "aurunci", "ausoni", "rieti",
         "viterbo", "frosinone", "cassino", "sora", "alatri", "filettino",
+    ],
+    "Marche": [
+        "sibillini", "ussita", "visso", "sarnano", "amandola", "montemonaco",
+        "arquata", "acquasanta", "catria", "nerone", "carpegna", "camerino",
+        "fabriano", "cingoli", "conero", "fiastra", "bolognola", "frontone",
+    ],
+    "Umbria": [
+        "norcia", "castelluccio", "valnerina", "cascia", "cucco", "gubbio",
+        "subasio", "colfiorito", "spoleto", "orvieto", "trasimeno", "amelia",
+        "nocera umbra", "pietralunga", "cerreto", "preci", "terni",
     ],
 }
 
@@ -3329,6 +3430,8 @@ st.markdown(
         <span class="chip">Molise</span>
         <span class="chip">Lazio</span>
         <span class="chip">Campania</span>
+        <span class="chip">Marche</span>
+        <span class="chip">Umbria</span>
       </div>
     </div>
     """,
@@ -3353,15 +3456,19 @@ with st.sidebar:
     )
     st.header("Filtri del bosco")
     st.markdown("**Regioni da calcolare**")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         r_abr = st.checkbox("Abruzzo", value=False)
         r_mol = st.checkbox("Molise", value=True)
     with c2:
         r_laz = st.checkbox("Lazio", value=False)
         r_cam = st.checkbox("Campania", value=False)
+    with c3:
+        r_mar = st.checkbox("Marche", value=False)
+        r_umb = st.checkbox("Umbria", value=False)
     regioni_sel = [n for n, on in (
-        ("Abruzzo", r_abr), ("Molise", r_mol), ("Lazio", r_laz), ("Campania", r_cam)
+        ("Abruzzo", r_abr), ("Molise", r_mol), ("Lazio", r_laz),
+        ("Campania", r_cam), ("Marche", r_mar), ("Umbria", r_umb),
     ) if on]
     st.markdown("**Tipo di bosco**")
     t1, t2 = st.columns(2)
@@ -3502,7 +3609,9 @@ col1, col2 = st.columns([1.4, 1])
 
 with col1:
     if risultati_view:
-        m = folium.Map(location=[41.7, 14.0], zoom_start=7)
+        lat_c = sum(r["lat"] for r in risultati_view) / len(risultati_view)
+        lon_c = sum(r["lon"] for r in risultati_view) / len(risultati_view)
+        m = folium.Map(location=[lat_c, lon_c], zoom_start=8)
         for r in risultati_view:
             color = (
                 "green" if r["score"] >= 70
