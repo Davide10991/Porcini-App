@@ -2513,8 +2513,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df_cf is not None and len(df_cf):
             return df_cf, info, forecast, soil, vento
 
-    # MN solo se entro 5 km E senza troppi buchi; altrimenti WC (più giorni / più mm)
-    RAGGIO_MN_BUONO = 5.0
+    # MN e WC: entro 8 km se i dati sono pieni
+    RAGGIO_MN_BUONO = 8.0
 
     def _giorni_pieni(dfx):
         if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
@@ -3577,6 +3577,12 @@ with st.sidebar:
         ("abete_bianco", t_ab), ("abete_rosso", t_ar),
     ) if on]
     quota_range = st.slider("Quota (m)", 0, 1800, (0, 1800), step=50)
+    st.markdown("**Fonte dati**")
+    f1, f2 = st.columns(2)
+    with f1:
+        f_staz = st.checkbox("Zone con stazione", value=True)
+    with f2:
+        f_radar = st.checkbox("Zone radar / mappe", value=True)
     cerca = st.text_input("Cerca zona (nome)", value="", placeholder="es. matese, sangro…")
     q_cerca = (cerca or "").strip().lower()
     if q_cerca:
@@ -3680,6 +3686,10 @@ risultati = st.session_state.get("risultati", [])
 if not risultati:
     st.stop()
 
+def _zona_radar(r):
+    fonte_txt = str((r.get("meteo") or {}).get("fonte") or "").lower()
+    return bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte_txt or "realtime" in fonte_txt
+
 # filtra i risultati già calcolati per ricerca/quota se l'utente non ha ricalcolato
 risultati_view = [
     r for r in risultati
@@ -3687,6 +3697,7 @@ risultati_view = [
     and r["tipo"] in tipi_sel
     and quota_range[0] <= r["quota"] <= quota_range[1]
     and (cerca.lower() in r["nome"].lower() if cerca else True)
+    and ((_zona_radar(r) and f_radar) or (not _zona_radar(r) and f_staz))
 ]
 
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -3706,8 +3717,7 @@ with col1:
         lon_c = sum(r["lon"] for r in risultati_view) / len(risultati_view)
         m = folium.Map(location=[lat_c, lon_c], zoom_start=8)
         for r in risultati_view:
-            fonte_txt = str((r.get("meteo") or {}).get("fonte") or "")
-            stima = bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte_txt.lower() or "realtime" in fonte_txt.lower()
+            stima = _zona_radar(r)
             if stima:
                 color = (
                     "#8fd98f" if r["score"] >= 70
@@ -3755,38 +3765,49 @@ with col1:
             Picco: {d.get('picco_max_data') or 'n/d'} {('('+str(d.get('picco_max_kmh'))+' km/h)') if d.get('picco_max_kmh') is not None else ''}<br>
             Giorni vento ≥20: {('<br>' + '<br>'.join(d.get('picchi_vento') or [])) if d.get('picchi_vento') else ' nessuno'}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
-            {('<b style="color:#a65b00;">◇ Stima mappa/radar — non affidabile al 100%</b><br>') if stima else ''}
+            {('<b style="color:#a65b00;">● Stima radar/mappe — non affidabile al 100%</b><br>') if stima else '<b>★ Stazione entro 8 km</b><br>'}
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
             </div>
             """
-            tip = f"{r['nome']} · {r['score']:.0f}" + (" · stima mappa" if stima else "")
+            tip = f"{r['nome']} · {r['score']:.0f}" + (" · radar/mappe" if stima else " · stazione")
             if stima:
-                folium.RegularPolygonMarker(
-                    location=[r["lat"], r["lon"]],
-                    number_of_sides=4,
-                    radius=9 + r["score"] / 14,
-                    rotation=45,
-                    color="#6b5a2a",
-                    fill=True,
-                    fill_color=color,
-                    fill_opacity=0.85,
-                    tooltip=tip,
-                    popup=folium.Popup(popup_html, max_width=260),
-                ).add_to(m)
-            else:
                 folium.CircleMarker(
                     location=[r["lat"], r["lon"]],
                     radius=8 + r["score"] / 12,
                     color=color,
                     fill=True,
                     fill_color=color,
-                    fill_opacity=0.75,
+                    fill_opacity=0.7,
                     tooltip=tip,
                     popup=folium.Popup(popup_html, max_width=260),
                 ).add_to(m)
+            else:
+                folium.Marker(
+                    location=[r["lat"], r["lon"]],
+                    tooltip=tip,
+                    popup=folium.Popup(popup_html, max_width=260),
+                    icon=folium.DivIcon(
+                        html=(
+                            f'<div style="font-size:22px;line-height:22px;color:{color};'
+                            f'text-shadow:0 1px 2px #000">★</div>'
+                        ),
+                        icon_size=(22, 22),
+                        icon_anchor=(11, 11),
+                    ),
+                ).add_to(m)
         with st.expander("Mappa delle zone", expanded=True):
             st_folium(m, width=700, height=520, returned_objects=[])
+            st.markdown(
+                """
+                <div style="color:#fff6e6;font-size:.92rem;line-height:1.45;padding:8px 4px 2px;">
+                <b>Legenda</b><br>
+                ★ stella = zona con stazione meteo entro 8 km<br>
+                ● cerchio = dati da mappe giornaliere / radar MeteoNetwork (non affidabile al 100%)
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         with st.expander("Radar Protezione Civile", expanded=False):
             st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
             st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
