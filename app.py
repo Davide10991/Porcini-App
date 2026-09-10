@@ -225,10 +225,10 @@ st.markdown(
     }
     .stProgress > div > div { background: linear-gradient(90deg, #6aa25c, #d86a38) !important; }
     [data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; }
-    .bmap-table { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(232,214,160,.28); background: rgba(10,22,14,.78); }
-    .bmap-table table { width: 100%; border-collapse: collapse; color: #fff6e6; font-size: .88rem; }
-    .bmap-table th { background: #163016; color: #e8d6a0; text-align: left; padding: 10px 12px; font-weight: 700; white-space: nowrap; }
-    .bmap-table td { padding: 8px 12px; border-top: 1px solid rgba(168,214,150,.16); color: #f3ead2; }
+    .bmap-table { overflow-x: auto; max-width: 100%; border-radius: 18px; border: 1px solid rgba(232,214,160,.28); background: rgba(10,22,14,.78); }
+    .bmap-table table { width: 100%; max-width: 100%; border-collapse: collapse; color: #fff6e6; font-size: .82rem; table-layout: fixed; }
+    .bmap-table th { background: #163016; color: #e8d6a0; text-align: left; padding: 8px 8px; font-weight: 700; }
+    .bmap-table td { padding: 7px 8px; border-top: 1px solid rgba(168,214,150,.16); color: #f3ead2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .bmap-table tr:nth-child(even) td { background: rgba(22,48,22,.45); }
     [data-testid="stSidebar"] .block-container { padding-top: .6rem; }
     [data-testid="stSidebar"] hr { border-color: rgba(168,214,150,.2) !important; }
@@ -3658,7 +3658,6 @@ for r in risultati_view:
         "zona": r["nome"],
         "stazione": staz,
         "mm_oggi": mm_oggi if mm_oggi is not None else "n/d",
-        "fonte": fonte[:80],
     })
 if live_rows:
     st.markdown(_tabella_bosco(pd.DataFrame(live_rows)), unsafe_allow_html=True)
@@ -3690,7 +3689,8 @@ if risultati_view:
         "stazione": r.get("meteo", {}).get("stazione"),
     } for r in risultati_view])
     tab = tab.astype(str)
-    st.markdown(_tabella_bosco(tab), unsafe_allow_html=True)
+    vis = tab[["zona", "regione", "tipo", "quota_m", "score", "livello", "pioggia_30g_mm", "stazione"]].copy()
+    st.markdown(_tabella_bosco(vis), unsafe_allow_html=True)
     st.download_button(
         "Scarica CSV",
         tab.to_csv(index=False).encode("utf-8"),
