@@ -2550,7 +2550,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             score += 10
         if online:
             score += 8
-        score -= float(dist) * 1.5
+        score -= float(dist) * 0.6
         return score
 
     cat_mn_pre = mn_catalogo_pubblico()
@@ -2572,30 +2572,36 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             mm_mn = float(pd.to_numeric(df_mn_peek["precip"], errors="coerce").sum()) if df_mn_peek is not None else 0.0
         except Exception:
             mm_mn = 0.0
+    mn_buchi = n_mn < 18
+    RAGGIO_WC = 8.0 if (mn_buchi or mn_min > RAGGIO_MN_BUONO) else 5.0
     wc_piu_pioggia = False
-    if usa_wc and mn_min <= RAGGIO_MN_BUONO:
+    if usa_wc:
         try:
             cat_peek = wc_catalogo()
             candid = []
             for staz in cat_peek:
                 dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-                if dkm <= RAGGIO_MN_BUONO:
+                if dkm <= RAGGIO_WC:
                     candid.append((dkm, staz))
             candid.sort(key=lambda x: x[0])
-            for dkm, staz in candid[:1]:
+            for dkm, staz in candid[:4]:
                 df_c = wc_mese_mm(staz.get("id") or staz.get("code"))
                 if df_c is None or "precip" not in df_c.columns:
                     continue
-                mm_c = float(pd.to_numeric(df_c["precip"], errors="coerce").sum())
                 n_c = _giorni_pieni(df_c)
                 sc_c = _affidabilita(df_c, online=bool(staz.get("online", True)), dist=dkm)
                 sc_m = _affidabilita(df_mn_peek, online=True, dist=mn_min)
-                if sc_c > sc_m:
+                if n_c >= 12 and (mn_buchi or sc_c > sc_m):
                     wc_piu_pioggia = True
                     break
         except Exception:
             wc_piu_pioggia = False
-    ha_mn_vicina = mn_min <= RAGGIO_MN_BUONO and n_mn >= 20 and not wc_piu_pioggia
+    ha_mn_vicina = (
+        mn_min <= RAGGIO_MN_BUONO
+        and n_mn >= 18
+        and not mn_buchi
+        and not wc_piu_pioggia
+    )
     _nz = (nome_zona or "").lower()
     d_gm = distanza_km(lat, lon, 41.350254, 14.365734)
     d_vt = distanza_km(lat, lon, 41.348467, 14.525056)
@@ -2611,7 +2617,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             forza_cusano = False
     if usa_wc and (not ha_mn_vicina or forza_piedimonte or forza_cusano):
         cat = wc_catalogo()
-        raggio_vicino = 5.0
+        raggio_vicino = 8.0 if (mn_buchi or not ha_mn_vicina) else 5.0
         tutte_dist = []
         for staz in cat:
             dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
