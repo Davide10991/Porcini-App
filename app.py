@@ -225,6 +225,11 @@ st.markdown(
     }
     .stProgress > div > div { background: linear-gradient(90deg, #6aa25c, #d86a38) !important; }
     [data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; }
+    .bmap-table { overflow-x: auto; border-radius: 18px; border: 1px solid rgba(232,214,160,.28); background: rgba(10,22,14,.78); }
+    .bmap-table table { width: 100%; border-collapse: collapse; color: #fff6e6; font-size: .88rem; }
+    .bmap-table th { background: #163016; color: #e8d6a0; text-align: left; padding: 10px 12px; font-weight: 700; white-space: nowrap; }
+    .bmap-table td { padding: 8px 12px; border-top: 1px solid rgba(168,214,150,.16); color: #f3ead2; }
+    .bmap-table tr:nth-child(even) td { background: rgba(22,48,22,.45); }
     [data-testid="stSidebar"] .block-container { padding-top: .6rem; }
     [data-testid="stSidebar"] hr { border-color: rgba(168,214,150,.2) !important; }
     [data-testid="stSidebar"] [data-testid="stCheckbox"] {
@@ -1691,6 +1696,32 @@ def _info_stazione(s, fonte):
         "pioggia_modello_30g": None,
         "pioggia_stazione_30g": None,
     }
+
+
+def _tabella_bosco(df):
+    if df is None or len(df) == 0:
+        return ""
+    cols = list(df.columns)
+
+    def _esc(v):
+        s = "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v)
+        return (
+            s.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    th = "".join(f"<th>{_esc(c)}</th>" for c in cols)
+    body = []
+    for _, rr in df.iterrows():
+        body.append("<tr>" + "".join(f"<td>{_esc(rr[c])}</td>" for c in cols) + "</tr>")
+    return (
+        '<div class="bmap-table"><table><thead><tr>'
+        + th
+        + "</tr></thead><tbody>"
+        + "".join(body)
+        + "</tbody></table></div>"
+    )
 
 
 def _wc_session():
@@ -3630,7 +3661,7 @@ for r in risultati_view:
         "fonte": fonte[:80],
     })
 if live_rows:
-    st.dataframe(pd.DataFrame(live_rows), width="stretch", hide_index=True)
+    st.markdown(_tabella_bosco(pd.DataFrame(live_rows)), unsafe_allow_html=True)
 st.caption("Fonte radar: Dipartimento della Protezione Civile — radar.protezionecivile.it")
 
 st.markdown("---")
@@ -3659,7 +3690,7 @@ if risultati_view:
         "stazione": r.get("meteo", {}).get("stazione"),
     } for r in risultati_view])
     tab = tab.astype(str)
-    st.dataframe(tab, width="stretch", hide_index=True)
+    st.markdown(_tabella_bosco(tab), unsafe_allow_html=True)
     st.download_button(
         "Scarica CSV",
         tab.to_csv(index=False).encode("utf-8"),
