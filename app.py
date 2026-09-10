@@ -3509,9 +3509,11 @@ with col1:
             ).add_to(m)
         st_folium(m, width=700, height=520, returned_objects=[])
         st.subheader("Pioggia live")
-        st.caption("Radar Protezione Civile sotto le zone. Se non parte, apri il sito.")
+        st.caption("Radar Protezione Civile e mappe giornaliere MeteoNetwork. Se un riquadro è vuoto, apri il sito.")
         st.markdown("[Apri radar.protezionecivile.it](https://radar.protezionecivile.it/)")
         st.components.v1.iframe("https://radar.protezionecivile.it/", height=420)
+        st.markdown("[Apri mappe realtime MeteoNetwork](https://www.meteonetwork.eu/it/mappe-realtime)")
+        st.components.v1.iframe("https://www.meteonetwork.eu/it/mappe-realtime", height=480)
     else:
         st.info("Nessuna zona sopra la soglia scelta.")
 
