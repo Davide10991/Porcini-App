@@ -2572,7 +2572,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             mm_mn = float(pd.to_numeric(df_mn_peek["precip"], errors="coerce").sum()) if df_mn_peek is not None else 0.0
         except Exception:
             mm_mn = 0.0
-    mn_buchi = n_mn < 18
+    mn_buchi = n_mn < 10
     RAGGIO_WC = 8.0 if (mn_buchi or mn_min > RAGGIO_MN_BUONO) else 5.0
     wc_piu_pioggia = False
     if usa_wc:
@@ -2598,7 +2598,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             wc_piu_pioggia = False
     ha_mn_vicina = (
         mn_min <= RAGGIO_MN_BUONO
-        and n_mn >= 18
+        and n_mn >= 10
         and not mn_buchi
         and not wc_piu_pioggia
     )
@@ -2862,7 +2862,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     else:
                         extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
                         serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
-            n_gg = int(df_mn["precip"].notna().sum()) if df_mn is not None and len(df_mn) else 0
+            n_gg = _giorni_pieni(serie if serie is not None and len(serie) else df_mn)
             ha_wc_8 = False
             if usa_wc:
                 try:
@@ -2872,18 +2872,20 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                             break
                 except Exception:
                     ha_wc_8 = False
-            if n_gg < 18 and not ha_wc_8 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
+            if n_gg < 10 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
                 rows_m = []
                 if s.get("oggi_mm") is not None:
                     rows_m.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
                 serie = pd.DataFrame(rows_m) if rows_m else pd.DataFrame({"date": [], "precip": []})
                 fonte = (
                     f"Mappe giornaliere MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                    + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
                     + " · archivio MN con buchi, niente WC vicina"
                     + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
                     + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
                 )
                 info = _info_stazione(s, fonte)
+                info["stima_mappa"] = True
                 info["giorni_pluviometro"] = _giorni_lista(serie) if len(serie) else [
                     f"mese rete MN: {s.get('mese_mm')} mm"
                 ]
@@ -3033,11 +3035,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df_fb is not None and len(df_fb):
             fonte = (
                 f"Mappa realtime MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
                 + " · nessuna stazione entro 8 km"
                 + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
                 + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
             )
             info = _info_stazione(s, fonte)
+            info["stima_mappa"] = True
             info["giorni_pluviometro"] = _giorni_lista(df_fb)
             info["pioggia_stazione_30g"] = _mm(df_fb)
             return df_fb, info, forecast, soil, vento
@@ -3702,12 +3706,22 @@ with col1:
         lon_c = sum(r["lon"] for r in risultati_view) / len(risultati_view)
         m = folium.Map(location=[lat_c, lon_c], zoom_start=8)
         for r in risultati_view:
-            color = (
-                "green" if r["score"] >= 70
-                else "orange" if r["score"] >= 50
-                else "red" if r["score"] >= 30
-                else "gray"
-            )
+            fonte_txt = str((r.get("meteo") or {}).get("fonte") or "")
+            stima = bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte_txt.lower() or "realtime" in fonte_txt.lower()
+            if stima:
+                color = (
+                    "#8fd98f" if r["score"] >= 70
+                    else "#ffd280" if r["score"] >= 50
+                    else "#ff9a9a" if r["score"] >= 30
+                    else "#c8c8c8"
+                )
+            else:
+                color = (
+                    "green" if r["score"] >= 70
+                    else "orange" if r["score"] >= 50
+                    else "red" if r["score"] >= 30
+                    else "gray"
+                )
             d = r.get("dettaglio", {})
             meteo = r.get("meteo", {}) or {}
             tot_staz = meteo.get("pioggia_stazione_30g")
@@ -3741,20 +3755,36 @@ with col1:
             Picco: {d.get('picco_max_data') or 'n/d'} {('('+str(d.get('picco_max_kmh'))+' km/h)') if d.get('picco_max_kmh') is not None else ''}<br>
             Giorni vento ≥20: {('<br>' + '<br>'.join(d.get('picchi_vento') or [])) if d.get('picchi_vento') else ' nessuno'}<br>
             Fonte: {meteo.get('fonte', 'n/d')}<br>
+            {('<b style="color:#a65b00;">◇ Stima mappa/radar — non affidabile al 100%</b><br>') if stima else ''}
             Stazione: {meteo.get('stazione', 'n/d')}<br>
             <b>Giorni di pioggia:</b><br>{giorni_html}
             </div>
             """
-            folium.CircleMarker(
-                location=[r["lat"], r["lon"]],
-                radius=8 + r["score"] / 12,
-                color=color,
-                fill=True,
-                fill_color=color,
-                fill_opacity=0.75,
-                tooltip=f"{r['nome']} · {r['score']:.0f}",
-                popup=folium.Popup(popup_html, max_width=260),
-            ).add_to(m)
+            tip = f"{r['nome']} · {r['score']:.0f}" + (" · stima mappa" if stima else "")
+            if stima:
+                folium.RegularPolygonMarker(
+                    location=[r["lat"], r["lon"]],
+                    number_of_sides=4,
+                    radius=9 + r["score"] / 14,
+                    rotation=45,
+                    color="#6b5a2a",
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=0.85,
+                    tooltip=tip,
+                    popup=folium.Popup(popup_html, max_width=260),
+                ).add_to(m)
+            else:
+                folium.CircleMarker(
+                    location=[r["lat"], r["lon"]],
+                    radius=8 + r["score"] / 12,
+                    color=color,
+                    fill=True,
+                    fill_color=color,
+                    fill_opacity=0.75,
+                    tooltip=tip,
+                    popup=folium.Popup(popup_html, max_width=260),
+                ).add_to(m)
         with st.expander("Mappa delle zone", expanded=True):
             st_folium(m, width=700, height=520, returned_objects=[])
         with st.expander("Radar Protezione Civile", expanded=False):
