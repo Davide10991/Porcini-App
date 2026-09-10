@@ -199,24 +199,14 @@ st.markdown(
         box-shadow: 0 16px 40px rgba(0,0,0,.3); border: 1px solid rgba(168,214,150,.22);
     }
     [data-testid="stExpander"] {
-        background: rgba(8,18,12,.72) !important;
-        border: 1px solid rgba(232,214,160,.45) !important;
+        background: rgba(8,18,12,.55) !important;
+        border: 1px solid rgba(232,214,160,.4) !important;
         border-radius: 18px !important; margin-bottom: 10px;
     }
-    [data-testid="stExpander"] summary,
-    [data-testid="stExpander"] summary p,
-    [data-testid="stExpander"] summary span,
-    [data-testid="stExpander"] details summary {
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
         color: #fff6e6 !important;
-        font-size: 1.15rem !important;
+        font-size: 1.12rem !important;
         font-weight: 700 !important;
-        font-family: 'Fraunces', serif !important;
-    }
-    [data-testid="stExpander"] svg { fill: #fff6e6 !important; width: 1.2rem; height: 1.2rem; }
-    [data-testid="stExpander"] summary {
-        background: #163016 !important;
-        padding: 10px 14px !important;
-        border-radius: 16px !important;
     }
     .stProgress > div > div { background: linear-gradient(90deg, #6aa25c, #d86a38) !important; }
     [data-testid="stDataFrame"] { border-radius: 16px; overflow: hidden; }
