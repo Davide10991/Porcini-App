@@ -910,6 +910,21 @@ STAZIONI = [
 ]
 
 
+def _ultimi_30g(df):
+    """Ogni aggiornamento: tengo solo gli ultimi 30 giorni."""
+    if df is None or len(df) == 0 or "date" not in getattr(df, "columns", []):
+        return df
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    d = d.dropna(subset=["date"])
+    if not len(d):
+        return d
+    oggi = pd.Timestamp(datetime.now().date())
+    taglio = oggi - pd.Timedelta(days=30)
+    d = d[(d["date"] >= taglio) & (d["date"] <= oggi)]
+    return d.sort_values("date")
+
+
 def distanza_km(lat1, lon1, lat2, lon2):
     r = 6371.0
     dlat = radians(lat2 - lat1)
@@ -1243,7 +1258,7 @@ def _salva_giorni_file():
     """Archivio rotante: tengo 31 giorni, cancello tutto ciò che è più vecchio di un mese."""
     try:
         store = dict(st.session_state.get("mn_giorni") or {})
-        limite = (datetime.now().date() - timedelta(days=31)).isoformat()
+        limite = (datetime.now().date() - timedelta(days=30)).isoformat()
         pulito = {}
         for k, v in store.items():
             d = ""
@@ -2429,7 +2444,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         return round(float(df["precip"].sum(skipna=True)), 1)
 
     def _giorni_lista(df):
-        """Giorni umidi + ultimi 8 giorni anche se a 0, così settembre si vede."""
+        """Solo piogge degli ultimi 30 giorni (>= 0,2 mm)."""
         out = []
         if df is None or len(df) == 0 or "precip" not in df.columns:
             return out
@@ -2437,19 +2452,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         d["date"] = pd.to_datetime(d["date"]).dt.normalize()
         d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0)
         oggi = pd.Timestamp(datetime.now().date())
-        visti = set()
+        taglio = oggi - pd.Timedelta(days=30)
+        d = d[(d["date"] >= taglio) & (d["date"] <= oggi)]
         for _, rr in d.sort_values("date").iterrows():
-            dt = pd.to_datetime(rr["date"]).normalize()
             mm = float(rr["precip"] or 0)
-            recenti = (oggi - dt).days <= 8
-            if mm >= 0.2 or recenti:
-                out.append(f"{dt.date()}: {mm:.1f} mm")
-                visti.add(dt)
-        for i in range(8):
-            dt = oggi - pd.Timedelta(days=i)
-            if dt not in visti:
-                out.append(f"{dt.date()}: 0.0 mm")
-        out.sort()
+            if mm >= 0.2:
+                out.append(f"{pd.to_datetime(rr['date']).date()}: {mm:.1f} mm")
         return out
 
     # Caput Frigoris: nome zona oppure stazione entro 5 km
@@ -3033,6 +3041,9 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 else:
                     df_fb = pd.concat([df_fb, pd.DataFrame([{"date": oggi_d, "precip": float(s["oggi_mm"])}])], ignore_index=True)
         if df_fb is not None and len(df_fb):
+            df_fb["date"] = pd.to_datetime(df_fb["date"], errors="coerce")
+            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+            df_fb = df_fb[df_fb["date"] >= taglio]
             fonte = (
                 f"Mappa realtime MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
                 + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
@@ -3254,6 +3265,7 @@ def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
 
 
 def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None):
+    df = _ultimi_30g(df)
     if df is None or len(df) < 5:
         return 0, "Dati insufficienti", {}
 
@@ -3467,6 +3479,25 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
         usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
     )
+    df = _ultimi_30g(df)
+    info_meteo = info_meteo or {}
+    giorni = info_meteo.get("giorni_pluviometro") or []
+    if giorni:
+        taglio = (datetime.now().date() - timedelta(days=30)).isoformat()
+        tenuti = []
+        for g in giorni:
+            gs = str(g)
+            data = gs.split(":")[0].strip()[:10]
+            if data >= taglio or data >= datetime.now().strftime("%Y-%m-%d")[:7]:
+                # accetta solo YYYY-MM-DD negli ultimi 30g
+                if len(data) >= 10 and data[:10] >= taglio:
+                    tenuti.append(g)
+        info_meteo["giorni_pluviometro"] = tenuti
+    if df is not None and len(df) and "precip" in df.columns:
+        try:
+            info_meteo["pioggia_stazione_30g"] = round(float(pd.to_numeric(df["precip"], errors="coerce").sum()), 1)
+        except Exception:
+            pass
     score, livello, det = calcola_punteggio(
         df, p["tipo"], regole, quota=p.get("quota", 1000),
         soil=soil, forecast=forecast, vento=vento,
