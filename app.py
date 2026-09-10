@@ -199,11 +199,26 @@ st.markdown(
         box-shadow: 0 16px 40px rgba(0,0,0,.3); border: 1px solid rgba(168,214,150,.22);
     }
     [data-testid="stExpander"] {
-        background: rgba(8,18,12,.55) !important;
+        background: rgba(8,18,12,.62) !important;
         border: 1px solid rgba(232,214,160,.4) !important;
         border-radius: 18px !important; margin-bottom: 10px;
     }
-    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p {
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary:hover,
+    [data-testid="stExpander"] summary:focus,
+    [data-testid="stExpander"] summary:active,
+    [data-testid="stExpander"] details[open] > summary,
+    [data-testid="stExpander"] button,
+    [data-testid="stExpander"] button:hover,
+    [data-testid="stExpander"] button:focus,
+    [data-testid="stExpander"] button:active {
+        background: #163016 !important;
+        background-color: #163016 !important;
+        color: #fff6e6 !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stExpander"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stExpander"] summary p {
         color: #fff6e6 !important;
         font-size: 1.12rem !important;
         font-weight: 700 !important;
