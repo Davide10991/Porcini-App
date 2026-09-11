@@ -2383,39 +2383,14 @@ def mn_archivio_pubblico(code, mesi=2):
             old_rain = None
         if old_rain is not None and rain <= 0 and old_rain > 0:
             rec["precip"] = old_rain
-        packed = {"precip": float(rec.get("precip") or 0), "date": d}
-        for k in ("t_max", "t_min", "t_med", "vento_max"):
-            if rec.get(k) is not None:
-                packed[k] = rec[k]
-            elif old.get(k) is not None:
-                packed[k] = old[k]
-                rec[k] = old[k]
-        store[key] = packed
-    oggi = datetime.now().date()
-    have = {pd.to_datetime(r["date"]).date().isoformat() for r in records}
-    for i in range(30):
-        d = (oggi - timedelta(days=i)).isoformat()
-        key = f"{code}|{d}"
-        if d in have or key not in store:
-            continue
-        try:
-            old = store[key] or {}
-            try:
-                old_p = float(old.get("precip"))
-            except Exception:
-                old_p = float("nan")
-            if pd.isna(old_p) or (old_p <= 0 and old.get("t_max") is None):
-                continue
-            rec = {
-                "date": pd.Timestamp(d),
-                "precip": old_p,
-            }
+        tmax = rec.get("t_max")
+        if rain > 0.15 or (tmax is not None and 5 <= float(tmax) <= 45):
+            packed = {"precip": float(rain), "date": d}
             for k in ("t_max", "t_min", "t_med", "vento_max"):
-                if old.get(k) is not None:
-                    rec[k] = float(old[k])
-            records.append(rec)
-        except Exception:
-            pass
+                if rec.get(k) is not None:
+                    packed[k] = rec[k]
+            store[key] = packed
+    # NON reimportare zeri dallo store: i --- diventavano 0 mm e la stazione sembrava viva
     st.session_state["mn_giorni"] = store
     _salva_giorni_file()
     if not records:
@@ -3602,12 +3577,22 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
                     viva = validi >= max(4, int(oggi.day * 0.45))
             except Exception:
                 viva = False
-        if not viva:
+        mm30 = info_meteo.get("pioggia_stazione_30g")
+        try:
+            mm30 = float(mm30) if mm30 is not None else 0.0
+        except Exception:
+            mm30 = 0.0
+        n_umidi = 0
+        for g in info_meteo.get("giorni_pluviometro") or []:
+            try:
+                n_umidi += 1 if float(str(g).rsplit(":", 1)[-1].replace("mm", "").strip().replace(",", ".")) >= 1 else 0
+            except Exception:
+                pass
+        if not viva or (mm30 < 5 and n_umidi < 2):
             info_meteo["stima_mappa"] = True
             info_meteo["fonte"] = (
                 "Mappe giornaliere MeteoNetwork · archivio stazione con buchi nel mese"
                 + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                + (f" · {fonte0}" if fonte0 else "")
             )
     giorni = info_meteo.get("giorni_pluviometro") or []
     if giorni:
