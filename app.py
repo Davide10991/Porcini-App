@@ -2664,8 +2664,23 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         score -= float(dist) * 0.6
         return score
 
+    def _mese_corrente_ok(dfx):
+        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
+            return False
+        try:
+            dd = dfx.copy()
+            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
+            oggi = pd.Timestamp(datetime.now().date())
+            dd = dd[(dd["date"].dt.year == oggi.year) & (dd["date"].dt.month == oggi.month)]
+            p = pd.to_numeric(dd["precip"], errors="coerce")
+            validi = int(p.notna().sum())
+            serve = max(4, int(oggi.day * 0.45))
+            return validi >= serve
+        except Exception:
+            return False
+
     def _mn_viva(dfx):
-        return _giorni_pieni(dfx) >= 10 and _giorni_recenti(dfx) >= 6
+        return _giorni_pieni(dfx) >= 10 and _giorni_recenti(dfx) >= 6 and _mese_corrente_ok(dfx)
 
     cat_mn_pre = mn_catalogo_pubblico()
     mn_min = 999.0
@@ -3009,14 +3024,18 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 df_mn = serie_mn.get(s["code"])
             if df_mn is None:
                 df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            df_punto_staz = None
+            if not _mn_viva(df_mn):
+                s = None
+                df_mn = None
+            if s is not None:
+                df_punto_staz = None
             try:
-                df_punto_staz, _, _, _ = get_openmeteo_bundle(s["lat"], s["lon"], days)
+                df_punto_staz, _, _, _ = get_openmeteo_bundle(s["lat"], s["lon"], days) if s is not None else (None,)
             except Exception:
                 df_punto_staz = None
             serie = df_punto_staz if df_punto_staz is not None else storico_om
             n_pluvio = 0
-            if serie is not None and df_mn is not None and len(df_mn):
+            if s is not None and serie is not None and df_mn is not None and len(df_mn):
                 serie = serie.copy()
                 n_pluvio = int(df_mn["precip"].notna().sum()) if "precip" in df_mn.columns else len(df_mn)
                 for _, row in df_mn.iterrows():
@@ -3025,7 +3044,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     mask = pd.to_datetime(serie["date"]).dt.normalize() == pd.to_datetime(row["date"]).normalize()
                     if mask.any() and not pd.isna(row.get("precip")):
                         serie.loc[mask, "precip"] = row["precip"]
-            if serie is not None:
+            if s is not None and serie is not None:
                 oggi_mm = None
                 if df_mn is not None and len(df_mn) and "precip" in df_mn.columns:
                     oggi_mm = df_mn.iloc[-1]["precip"]
@@ -3561,6 +3580,35 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     )
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
+    fonte0 = str(info_meteo.get("fonte") or "")
+    if (
+        fonte0.startswith("MeteoNetwork")
+        and "mappe" not in fonte0.lower()
+        and "realtime" not in fonte0.lower()
+        and "interpolato" not in fonte0.lower()
+    ):
+        mcode = re.search(r"\(([a-z]{2,5}\d{2,4})\)", fonte0, flags=re.I)
+        code = mcode.group(1) if mcode else None
+        viva = False
+        if code:
+            try:
+                dfa = mn_archivio_pubblico(code, 2)
+                if dfa is not None and len(dfa) and "precip" in dfa.columns:
+                    dfa = dfa.copy()
+                    dfa["date"] = pd.to_datetime(dfa["date"], errors="coerce")
+                    oggi = pd.Timestamp(datetime.now().date())
+                    mese = dfa[(dfa["date"].dt.year == oggi.year) & (dfa["date"].dt.month == oggi.month)]
+                    validi = int(pd.to_numeric(mese["precip"], errors="coerce").notna().sum())
+                    viva = validi >= max(4, int(oggi.day * 0.45))
+            except Exception:
+                viva = False
+        if not viva:
+            info_meteo["stima_mappa"] = True
+            info_meteo["fonte"] = (
+                "Mappe giornaliere MeteoNetwork · archivio stazione con buchi nel mese"
+                + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
+                + (f" · {fonte0}" if fonte0 else "")
+            )
     giorni = info_meteo.get("giorni_pluviometro") or []
     if giorni:
         taglio = (datetime.now().date() - timedelta(days=30)).isoformat()
