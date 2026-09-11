@@ -2943,112 +2943,57 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 if _mn_viva(df_chk):
                     s = cand
                     break
-            if s is None:
-                s = vicine_pub[0]
-            prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
-            nome_l = (nome_zona or "").lower()
-            if "mls071" in prefer and (
-                "capracotta" in nome_l
-                or str(s.get("code") or "").lower() in {"mls052", "mls064"}
-            ):
-                s = prefer["mls071"]
-            if any(k in nome_l for k in ("bojano", "boiano", "spinete")) and "mls065" in prefer:
-                s = prefer["mls065"]
-            mesi_arch = 3 if str(s.get("code") or "").lower() == "laz201" else 2
-            df_mn = mn_archivio_pubblico(s["code"], mesi_arch)
-            if df_mn is None and mn_token:
-                df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            store = _carica_giorni_file()
-            recs = []
-            pref = str(s.get("code") or "").lower() + "|"
-            for k, v in (store or {}).items():
-                if not str(k).lower().startswith(pref):
-                    continue
-                try:
-                    rec = {
-                        "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
-                        "precip": float((v or {}).get("precip") or 0),
-                    }
-                    for kk in ("t_max", "t_min", "t_med", "vento_max"):
-                        if v and v.get(kk) is not None:
-                            rec[kk] = float(v[kk])
-                    recs.append(rec)
-                except Exception:
-                    pass
-            if recs:
-                df_store = pd.DataFrame(recs)
-                if df_mn is None or not len(df_mn):
-                    df_mn = df_store
+            if s is not None:
+                prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
+                nome_l = (nome_zona or "").lower()
+                if "mls071" in prefer and (
+                    "capracotta" in nome_l
+                    or str(s.get("code") or "").lower() in {"mls052", "mls064"}
+                ):
+                    s2 = prefer["mls071"]
+                    if _mn_viva(mn_archivio_pubblico(s2.get("code"), 2)):
+                        s = s2
+                if any(k in nome_l for k in ("bojano", "boiano", "spinete")) and "mls065" in prefer:
+                    s2 = prefer["mls065"]
+                    if _mn_viva(mn_archivio_pubblico(s2.get("code"), 2)):
+                        s = s2
+                mesi_arch = 3 if str(s.get("code") or "").lower() == "laz201" else 2
+                df_arch = mn_archivio_pubblico(s["code"], mesi_arch)
+                if df_arch is None and mn_token:
+                    df_arch = mn_dati_stazione(mn_token, s["code"], days)
+                if not _mn_viva(df_arch):
+                    s = None
                 else:
-                    df_mn = pd.concat([df_store, df_mn], ignore_index=True)
-                df_mn["date"] = pd.to_datetime(df_mn["date"], errors="coerce")
-                df_mn = df_mn.dropna(subset=["date"]).drop_duplicates("date", keep="last").sort_values("date")
-            serie = None
-            if df_mn is not None and len(df_mn):
-                df_mn = df_mn.copy()
-                df_mn["date"] = pd.to_datetime(df_mn["date"]).dt.normalize()
-                taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
-                df_mn30 = df_mn[df_mn["date"] >= taglio].copy()
-                serie = df_mn30
-                oggi_d = pd.Timestamp(datetime.now().date())
-                if s.get("oggi_mm") is not None:
-                    if (serie["date"] == oggi_d).any():
-                        serie.loc[serie["date"] == oggi_d, "precip"] = s["oggi_mm"]
-                    else:
-                        extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
-                        serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
-            n_gg = _giorni_pieni(serie if serie is not None and len(serie) else df_mn)
-            ha_wc_8 = False
-            if usa_wc:
-                try:
-                    for stw in wc_catalogo() or []:
-                        if distanza_km(lat, lon, stw["lat"], stw["lon"]) <= 8.0:
-                            ha_wc_8 = True
-                            break
-                except Exception:
-                    ha_wc_8 = False
-            n_rec = _giorni_recenti(serie if serie is not None and len(serie) else df_mn)
-            if n_gg < 10 or n_rec < 6:
-                # stazione MN con buchi: non la usare mai come pluviometro del bosco
-                if not ha_wc_8 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
-                    rows_m = []
-                    if s.get("oggi_mm") is not None:
-                        rows_m.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
-                    serie = pd.DataFrame(rows_m) if rows_m else pd.DataFrame({"date": [], "precip": []})
+                    serie = df_arch
+                    if serie is not None and len(serie):
+                        serie = serie.copy()
+                        serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
+                        taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
+                        serie = serie[serie["date"] >= taglio]
+                        oggi_d = pd.Timestamp(datetime.now().date())
+                        if s.get("oggi_mm") is not None:
+                            if (serie["date"] == oggi_d).any():
+                                serie.loc[serie["date"] == oggi_d, "precip"] = s["oggi_mm"]
+                            else:
+                                extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
+                                serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
+                    n_gg = _giorni_pieni(serie)
                     fonte = (
-                        f"Mappe giornaliere MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                        + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                        + " · archivio MN con buchi"
+                        f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
                         + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                        + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+                        + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
                     )
                     info = _info_stazione(s, fonte)
-                    info["stima_mappa"] = True
-                    info["giorni_pluviometro"] = _giorni_lista(serie) if len(serie) else [
-                        f"mese rete MN: {s.get('mese_mm')} mm"
-                    ]
-                    info["pioggia_stazione_30g"] = float(s["mese_mm"]) if s.get("mese_mm") is not None else _mm(serie)
+                    info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
+                    if serie is not None and len(serie):
+                        info["pioggia_stazione_30g"] = _mm(serie)
+                        if "vento_max" in serie.columns:
+                            vento = riepilogo_vento(serie)
+                    else:
+                        info["pioggia_stazione_30g"] = 0.0
+                        serie = pd.DataFrame({"date": [], "precip": []})
                     return serie, info, forecast, soil, vento
-                # buchi + c'è WC o niente mese rete: non restituire questa MN
-                s = None
-                serie = None
-                df_mn = None
-            if s is not None:
-                fonte = (
-                    f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                    + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                    + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
-                )
-                info = _info_stazione(s, fonte)
-                info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
-                if serie is not None and len(serie):
-                    info["pioggia_stazione_30g"] = _mm(serie)
-                    if "vento_max" in serie.columns:
-                        vento = riepilogo_vento(serie)
-                else:
-                    info["pioggia_stazione_30g"] = 0.0
-                    serie = pd.DataFrame({"date": [], "precip": []})
-                return serie, info, forecast, soil, vento
+
 
     # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
