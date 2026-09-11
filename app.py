@@ -279,7 +279,7 @@ if not st.session_state["app_ok"]:
         <div class="login-card">
           <p class="kicker">Centro Italia</p>
           <h1>Boletus Map</h1>
-          <p class="lede">Mappa interattiva crescita Boletus<br>&amp;<br>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
+          <p class="lede">Mappa interattiva crescita Boletus Centro Italia</p>
           <div class="chip-row">
             <span class="chip">Abruzzo</span>
             <span class="chip">Molise</span>
@@ -3679,7 +3679,7 @@ st.markdown(
         <h1>Boletus Map</h1>
         <span class="hero-fungo">🍄‍🟫</span>
       </div>
-      <p class="lede">Mappa interattiva crescita Boletus<br>&amp;<br>Mappa Live piogge (dati presi direttamente dal sito della Protezione Civile)</p>
+      <p class="lede">Mappa interattiva crescita Boletus Centro Italia</p>
       <div class="chip-row">
         <span class="chip">Abruzzo</span>
         <span class="chip">Molise</span>
