@@ -2351,17 +2351,28 @@ def mn_archivio_pubblico(code, mesi=2):
                 continue
             rec = {"date": pd.Timestamp(dt.date()), "precip": rain}
             for src, dst in (("tmax", "t_max"), ("tmin", "t_min"), ("tmed", "t_med"), ("wmax", "vento_max")):
-                if row.get(src) not in (None, ""):
-                    try:
-                        rec[dst] = float(str(row[src]).replace(",", "."))
-                    except Exception:
-                        pass
+                raw_t = row.get(src)
+                ttxt = str(raw_t).strip().lower() if raw_t is not None else ""
+                if raw_t in (None, "") or ttxt in ("---", "--", "-", "nan", "none", "null"):
+                    continue
+                try:
+                    rec[dst] = float(str(raw_t).replace(",", "."))
+                except Exception:
+                    pass
+            # giorno morto: niente pioggia vera e niente temperature
+            if pd.isna(rec.get("precip")) and rec.get("t_max") is None:
+                continue
             records.append(rec)
     store = _carica_giorni_file()
     for rec in records:
         d = pd.to_datetime(rec["date"]).date().isoformat()
         key = f"{code}|{d}"
-        rain = float(rec.get("precip") or 0)
+        try:
+            rain = float(rec.get("precip"))
+            if pd.isna(rain):
+                continue
+        except Exception:
+            continue
         old = store.get(key) or {}
         if not isinstance(old, dict):
             old = {"precip": old, "date": d}
@@ -2389,9 +2400,15 @@ def mn_archivio_pubblico(code, mesi=2):
             continue
         try:
             old = store[key] or {}
+            try:
+                old_p = float(old.get("precip"))
+            except Exception:
+                old_p = float("nan")
+            if pd.isna(old_p) or (old_p <= 0 and old.get("t_max") is None):
+                continue
             rec = {
                 "date": pd.Timestamp(d),
-                "precip": float(old.get("precip") or 0),
+                "precip": old_p,
             }
             for k in ("t_max", "t_min", "t_med", "vento_max"):
                 if old.get(k) is not None:
@@ -2594,7 +2611,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
             taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
             dd = dd[dd["date"] >= taglio]
-            return int(pd.to_numeric(dd["precip"], errors="coerce").notna().sum())
+            p = pd.to_numeric(dd["precip"], errors="coerce")
+            if "t_max" in dd.columns:
+                t = pd.to_numeric(dd["t_max"], errors="coerce")
+                ok = p.notna() & ~((p <= 0) & t.isna())
+            else:
+                ok = p.notna()
+            return int(ok.sum())
         except Exception:
             return 0
 
@@ -2606,7 +2629,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
             taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=giorni)
             dd = dd[dd["date"] >= taglio]
-            return int(pd.to_numeric(dd["precip"], errors="coerce").notna().sum())
+            p = pd.to_numeric(dd["precip"], errors="coerce")
+            if "t_max" in dd.columns:
+                t = pd.to_numeric(dd["t_max"], errors="coerce")
+                ok = p.notna() & ~((p <= 0) & t.isna())
+            else:
+                ok = p.notna()
+            return int(ok.sum())
         except Exception:
             return 0
 
@@ -2635,27 +2664,43 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         score -= float(dist) * 0.6
         return score
 
+    def _mn_viva(dfx):
+        return _giorni_pieni(dfx) >= 10 and _giorni_recenti(dfx) >= 6
+
     cat_mn_pre = mn_catalogo_pubblico()
     mn_min = 999.0
     mn_near = None
-    if cat_mn_pre:
-        for s in cat_mn_pre:
-            dkm = distanza_km(lat, lon, s["lat"], s["lon"])
-            if dkm < mn_min:
-                mn_min = dkm
-                mn_near = s
     n_mn = 0
     mm_mn = 0.0
     df_mn_peek = None
-    if mn_near is not None and mn_min <= RAGGIO_MN_BUONO:
-        df_mn_peek = mn_archivio_pubblico(mn_near.get("code"), 2)
-        n_mn = _giorni_pieni(df_mn_peek)
-        try:
-            mm_mn = float(pd.to_numeric(df_mn_peek["precip"], errors="coerce").sum()) if df_mn_peek is not None else 0.0
-        except Exception:
-            mm_mn = 0.0
+    if cat_mn_pre:
+        cand_mn = []
+        for s in cat_mn_pre:
+            dkm = distanza_km(lat, lon, s["lat"], s["lon"])
+            if dkm <= RAGGIO_MN_BUONO:
+                cand_mn.append((dkm, s))
+        cand_mn.sort(key=lambda x: x[0])
+        if cand_mn:
+            mn_min = cand_mn[0][0]
+        for dkm, s in cand_mn[:5]:
+            df_try = mn_archivio_pubblico(s.get("code"), 2)
+            if _mn_viva(df_try):
+                mn_near = s
+                mn_min = dkm
+                df_mn_peek = df_try
+                n_mn = _giorni_pieni(df_try)
+                try:
+                    mm_mn = float(pd.to_numeric(df_try["precip"], errors="coerce").sum())
+                except Exception:
+                    mm_mn = 0.0
+                break
+        if mn_near is None and cand_mn:
+            mn_near = cand_mn[0][1]
+            mn_min = cand_mn[0][0]
+            df_mn_peek = mn_archivio_pubblico(mn_near.get("code"), 2)
+            n_mn = _giorni_pieni(df_mn_peek)
     n_mn_rec = _giorni_recenti(df_mn_peek) if df_mn_peek is not None else 0
-    mn_buchi = n_mn < 10 or n_mn_rec < 6
+    mn_buchi = not _mn_viva(df_mn_peek) if df_mn_peek is not None else True
     RAGGIO_WC = 8.0 if (mn_buchi or mn_min > RAGGIO_MN_BUONO) else 5.0
     wc_piu_pioggia = False
     if usa_wc:
@@ -2892,7 +2937,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     s0["distanza_km"] = round(extra[0][0], 1)
                     vicine_pub.append(s0)
         if vicine_pub:
-            s = vicine_pub[0]
+            s = None
+            for cand in vicine_pub[:6]:
+                df_chk = mn_archivio_pubblico(cand.get("code"), 2)
+                if _mn_viva(df_chk):
+                    s = cand
+                    break
+            if s is None:
+                s = vicine_pub[0]
             prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
             nome_l = (nome_zona or "").lower()
             if "mls071" in prefer and (
