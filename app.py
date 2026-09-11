@@ -2340,7 +2340,12 @@ def mn_archivio_pubblico(code, mesi=2):
         for row in rows:
             try:
                 g = int(str(row.get("giorno") or "0"))
-                rain = float(row.get("rain") or 0)
+                raw = row.get("rain")
+                txt = str(raw).strip().lower() if raw is not None else ""
+                if raw in (None, "") or txt in ("---", "--", "-", "nan", "none", "null"):
+                    rain = float("nan")
+                else:
+                    rain = float(str(raw).replace(",", "."))
                 dt = datetime(d0.year, d0.month, g)
             except Exception:
                 continue
@@ -2593,6 +2598,18 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             return 0
 
+    def _giorni_recenti(dfx, giorni=12):
+        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
+            return 0
+        try:
+            dd = dfx.copy()
+            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
+            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=giorni)
+            dd = dd[dd["date"] >= taglio]
+            return int(pd.to_numeric(dd["precip"], errors="coerce").notna().sum())
+        except Exception:
+            return 0
+
     def _affidabilita(dfx, online=True, dist=5.0):
         n = _giorni_pieni(dfx)
         if n < 8:
@@ -2637,7 +2654,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             mm_mn = float(pd.to_numeric(df_mn_peek["precip"], errors="coerce").sum()) if df_mn_peek is not None else 0.0
         except Exception:
             mm_mn = 0.0
-    mn_buchi = n_mn < 10
+    n_mn_rec = _giorni_recenti(df_mn_peek) if df_mn_peek is not None else 0
+    mn_buchi = n_mn < 10 or n_mn_rec < 6
     RAGGIO_WC = 8.0 if (mn_buchi or mn_min > RAGGIO_MN_BUONO) else 5.0
     wc_piu_pioggia = False
     if usa_wc:
@@ -2937,40 +2955,48 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                             break
                 except Exception:
                     ha_wc_8 = False
-            if n_gg < 10 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
-                rows_m = []
-                if s.get("oggi_mm") is not None:
-                    rows_m.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
-                serie = pd.DataFrame(rows_m) if rows_m else pd.DataFrame({"date": [], "precip": []})
+            n_rec = _giorni_recenti(serie if serie is not None and len(serie) else df_mn)
+            if n_gg < 10 or n_rec < 6:
+                # stazione MN con buchi: non la usare mai come pluviometro del bosco
+                if not ha_wc_8 and (s.get("mese_mm") is not None or s.get("oggi_mm") is not None):
+                    rows_m = []
+                    if s.get("oggi_mm") is not None:
+                        rows_m.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
+                    serie = pd.DataFrame(rows_m) if rows_m else pd.DataFrame({"date": [], "precip": []})
+                    fonte = (
+                        f"Mappe giornaliere MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
+                        + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
+                        + " · archivio MN con buchi"
+                        + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
+                        + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+                    )
+                    info = _info_stazione(s, fonte)
+                    info["stima_mappa"] = True
+                    info["giorni_pluviometro"] = _giorni_lista(serie) if len(serie) else [
+                        f"mese rete MN: {s.get('mese_mm')} mm"
+                    ]
+                    info["pioggia_stazione_30g"] = float(s["mese_mm"]) if s.get("mese_mm") is not None else _mm(serie)
+                    return serie, info, forecast, soil, vento
+                # buchi + c'è WC o niente mese rete: non restituire questa MN
+                s = None
+                serie = None
+                df_mn = None
+            if s is not None:
                 fonte = (
-                    f"Mappe giornaliere MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                    + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                    + " · archivio MN con buchi, niente WC vicina"
+                    f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
                     + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                    + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
+                    + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
                 )
                 info = _info_stazione(s, fonte)
-                info["stima_mappa"] = True
-                info["giorni_pluviometro"] = _giorni_lista(serie) if len(serie) else [
-                    f"mese rete MN: {s.get('mese_mm')} mm"
-                ]
-                info["pioggia_stazione_30g"] = float(s["mese_mm"]) if s.get("mese_mm") is not None else _mm(serie)
+                info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
+                if serie is not None and len(serie):
+                    info["pioggia_stazione_30g"] = _mm(serie)
+                    if "vento_max" in serie.columns:
+                        vento = riepilogo_vento(serie)
+                else:
+                    info["pioggia_stazione_30g"] = 0.0
+                    serie = pd.DataFrame({"date": [], "precip": []})
                 return serie, info, forecast, soil, vento
-            fonte = (
-                f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
-            )
-            info = _info_stazione(s, fonte)
-            info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
-            if serie is not None and len(serie):
-                info["pioggia_stazione_30g"] = _mm(serie)
-                if "vento_max" in serie.columns:
-                    vento = riepilogo_vento(serie)
-            else:
-                info["pioggia_stazione_30g"] = 0.0
-                serie = pd.DataFrame({"date": [], "precip": []})
-            return serie, info, forecast, soil, vento
 
     # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
     #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
