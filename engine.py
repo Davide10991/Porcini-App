@@ -10,6 +10,7 @@ import io
 import json
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 import time
 
 try:
@@ -40,7 +41,7 @@ class _St:
     secrets = {}
     def cache_data(self, ttl=None, **k):
         def deco(fn):
-            return fn
+            return lru_cache(maxsize=512)(fn)
         return deco
     def progress(self, *a, **k):
         b = _Bar()
