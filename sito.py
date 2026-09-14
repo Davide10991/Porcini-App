@@ -26,6 +26,8 @@ import engine
 
 app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
+ADMIN_USER = "Davide1099"
+ADMIN_PASS = "Ciccione99"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": []}
@@ -130,17 +132,20 @@ def _jsonable(obj):
 def login():
     err = ""
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
+        email = (request.form.get("email") or "").strip()
         pw = (request.form.get("password") or "").strip()
-        users = _utenti()
-        if pw == engine.GUEST_PASS:
+        email_l = email.lower()
+        if email == ADMIN_USER and pw == ADMIN_PASS:
             session["ok"] = True
-            session["email"] = email or "ospite"
+            session["email"] = ADMIN_USER
+            session["ruolo"] = "admin"
             return redirect(url_for("home"))
-        rec = users.get(email)
+        users = _utenti()
+        rec = users.get(email_l)
         if rec and check_password_hash(rec.get("hash", ""), pw):
             session["ok"] = True
-            session["email"] = email
+            session["email"] = email_l
+            session["ruolo"] = "guest"
             return redirect(url_for("home"))
         err = "Email o password errati"
     return render_template("login.html", errore=err)
@@ -175,6 +180,7 @@ def register():
                     pass
                 session["ok"] = True
                 session["email"] = email
+                session["ruolo"] = "guest"
                 return redirect(url_for("home"))
     return render_template("register.html", errore=err)
 
@@ -192,6 +198,8 @@ def home():
         "index.html",
         n_punti=len(engine.PUNTI),
         regioni=sorted({p["regione"] for p in engine.PUNTI}),
+        ruolo=session.get("ruolo", "guest"),
+        email=session.get("email", ""),
     )
 
 
