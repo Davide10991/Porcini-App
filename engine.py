@@ -3204,14 +3204,21 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         )
         info = {
             "fonte": fonte,
-            "stazione": "mappa MN + DPC",
-            "dpc_24h": dpc_mm,
+            "stazione": "mappa MN",
             "distanza_km": 0,
             "stima_mappa": True,
             "giorni_pluviometro": _giorni_lista(df_fb),
             "pioggia_stazione_30g": mese_m,
         }
         return df_fb, info, forecast, soil, vento
+
+    if storico_om is not None and len(storico_om):
+        info["fonte"] = "Nessuna stazione né mappa MN · serie modello (ultima spiaggia)"
+        info["stazione"] = "modello"
+        info["stima_mappa"] = True
+        info["giorni_pluviometro"] = _giorni_lista(storico_om)
+        info["pioggia_stazione_30g"] = _mm(storico_om)
+        return storico_om, info, forecast, soil, vento
 
     info["fonte"] = "Nessuna stazione MeteoNetwork/WeatherCloud nel raggio"
     return None, info, forecast, soil, vento
