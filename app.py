@@ -2725,7 +2725,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     d_vt = distanza_km(lat, lon, 41.348467, 14.525056)
     forza_piedimonte = (
         "alife" not in _nz
-        and (d_gm <= 5.0 or "piedimonte" in _nz or "castello del matese" in _nz)
+        and (
+            d_gm <= 5.0
+            or "piedimonte" in _nz
+            or "castello del matese" in _nz
+            or "lago del matese" in _nz
+            or "bocca della selva" in _nz
+            or "san gregorio matese" in _nz
+        )
     )
     forza_cusano = d_vt <= 5.0 or (("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz))
     if forza_piedimonte and forza_cusano:
