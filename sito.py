@@ -223,6 +223,36 @@ def api_progress():
     return jsonify(engine.CALC_PROGRESS)
 
 
+@app.route("/api/punto", methods=["POST"])
+@login_required
+def api_punto():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        lat = float(body.get("lat"))
+        lon = float(body.get("lon"))
+    except Exception:
+        return jsonify({"ok": False, "errore": "coordinate"}), 400
+    tipo = (body.get("tipo") or "faggio").strip()
+    try:
+        quota = int(body.get("quota") or 1000)
+    except Exception:
+        quota = 1000
+    p = {
+        "nome": body.get("nome") or f"Punto {lat:.3f},{lon:.3f}",
+        "lat": lat,
+        "lon": lon,
+        "tipo": tipo,
+        "quota": quota,
+        "regione": body.get("regione") or "Italia",
+    }
+    regole = {
+        "pioggia_min": int(body.get("pioggia_min") or 40),
+        "pioggia_max": int(body.get("pioggia_max") or 100),
+    }
+    r = engine.analizza_punto(p, regole, "", 5.0, "", None, None, True)
+    return jsonify({"ok": True, "zona": r})
+
+
 @app.route("/api/calcola", methods=["POST"])
 @login_required
 def api_calcola():
