@@ -702,22 +702,40 @@ def _mn_rgb_to_mm(rgb):
     return float(best)
 
 
+_MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
+
+
 @st.cache_data(ttl=21600)
 def _mn_mappa_px(giorno, variabile="prec"):
-    """Scarica e decodifica UNA volta la PNG del giorno."""
+    """Scarica e decodifica UNA volta la PNG del giorno (disco + RAM)."""
     d = str(giorno)
+    _MAPPE_DIR.mkdir(exist_ok=True)
+    fp = _MAPPE_DIR / f"{d}_{variabile}.bin"
+    if fp.exists() and fp.stat().st_size > 1000:
+        try:
+            raw = fp.read_bytes()
+            w = int.from_bytes(raw[:4], "big")
+            h = int.from_bytes(raw[4:8], "big")
+            return (w, h, raw[8:])
+        except Exception:
+            pass
     url = (
         "https://cdn1.meteonetwork.it/models/malawi/wnetwork/mappe_daily/"
         f"{d}/{d}_{variabile}_italia.png"
     )
     try:
-        r = requests.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200 or len(r.content) < 10000:
             return None
         from PIL import Image
         import io
         im = Image.open(io.BytesIO(r.content)).convert("RGB")
-        return (im.size[0], im.size[1], im.tobytes())
+        buf = im.tobytes()
+        try:
+            fp.write_bytes(im.size[0].to_bytes(4, "big") + im.size[1].to_bytes(4, "big") + buf)
+        except Exception:
+            pass
+        return (im.size[0], im.size[1], buf)
     except Exception:
         return None
 
@@ -737,8 +755,13 @@ def mn_prec_da_mappa(lat, lon, giorno):
 
 def mn_preload_mappe(giorni=30):
     oggi = datetime.now().date()
-    for i in range(giorni):
+    fatti = 0
+    def _one(i):
         _mn_mappa_px((oggi - timedelta(days=i)).isoformat(), "prec")
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for _ in ex.map(_one, range(giorni)):
+            fatti += 1
+            CALC_PROGRESS.update({"pct": max(1, int(fatti * 12 / giorni)), "text": f"Mappe MN {fatti}/{giorni}"})
 
 
 def mn_pioggia_mappa(lat, lon, raggio=15):
