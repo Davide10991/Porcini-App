@@ -227,14 +227,7 @@ def api_progress():
 @login_required
 def api_calcola():
     body = request.get_json(force=True, silent=True) or {}
-    regioni = body.get("regioni") or [
-        "Abruzzo",
-        "Molise",
-        "Lazio",
-        "Campania",
-        "Marche",
-        "Umbria",
-    ]
+    regioni = body.get("regioni") or sorted({p["regione"] for p in engine.PUNTI})
     tipi = body.get("tipi") or [
         "faggio",
         "castagno",
