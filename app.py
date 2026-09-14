@@ -910,43 +910,99 @@ STAZIONI = [
 ]
 
 
-def mn_pioggia_mappa(lat, lon, raggio=35):
-    """Pioggia delle mappe giornaliere MN: interpolazione sul punto (stesso campo della mappa)."""
-    cat = mn_catalogo_pubblico() or []
-    num_o = den_o = num_m = den_m = 0.0
-    n = 0
-    for s in cat:
-        try:
-            dkm = max(0.3, distanza_km(lat, lon, float(s["lat"]), float(s["lon"])))
-        except Exception:
-            continue
-        if dkm > raggio:
-            continue
-        try:
-            oggi = float(s["oggi_mm"]) if s.get("oggi_mm") is not None else None
-        except Exception:
-            oggi = None
-        try:
-            mese = float(s["mese_mm"]) if s.get("mese_mm") is not None else None
-        except Exception:
-            mese = None
-        if (oggi is None or oggi == 0) and (mese is None or mese == 0):
-            continue
-        w = 1.0 / (dkm * dkm)
-        if oggi is not None:
-            num_o += w * oggi
-            den_o += w
-        if mese is not None:
-            num_m += w * mese
-            den_m += w
-        n += 1
-    if n < 1:
+
+MN_PREC_PALETTE = [
+    ((216, 227, 255), 0.1),
+    ((186, 204, 255), 0.5),
+    ((151, 185, 255), 1.0),
+    ((136, 160, 255), 2.0),
+    ((113, 127, 249), 5.0),
+    ((39, 111, 253), 10.0),
+    ((13, 139, 188), 15.0),
+    ((13, 183, 98), 20.0),
+    ((65, 231, 35), 30.0),
+    ((132, 255, 13), 40.0),
+    ((175, 255, 35), 50.0),
+    ((221, 255, 43), 60.0),
+    ((255, 237, 13), 80.0),
+    ((255, 193, 13), 100.0),
+    ((255, 156, 13), 120.0),
+    ((255, 112, 13), 150.0),
+    ((248, 34, 13), 200.0),
+    ((135, 13, 13), 250.0),
+]
+
+
+def _mn_png_xy(lat, lon, w=1026, h=1252):
+    x = 50 + (float(lon) - 6.2) / (18.8 - 6.2) * 900
+    y = 70 + (47.2 - float(lat)) / (47.2 - 36.5) * 1090
+    return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
+
+
+def _mn_rgb_to_mm(rgb):
+    r, g, b = rgb[:3]
+    # mare / rilievo / neutro = 0 mm
+    if abs(r - g) < 18 and abs(g - b) < 18:
+        return 0.0
+    if b > 230 and r > 160 and g > 200 and r < 230:
+        return 0.0
+    best, bd = 0.0, 1e9
+    for (pr, pg, pb), mm in MN_PREC_PALETTE:
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if d < bd:
+            bd, best = d, mm
+    if bd > 9000:
+        return 0.0
+    return float(best)
+
+
+@st.cache_data(ttl=21600)
+def _mn_mappa_png(giorno, variabile="prec"):
+    d = str(giorno)
+    url = (
+        "https://cdn1.meteonetwork.it/models/malawi/wnetwork/mappe_daily/"
+        f"{d}/{d}_{variabile}_italia.png"
+    )
+    try:
+        r = requests.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200 or len(r.content) < 10000:
+            return None
+        return r.content
+    except Exception:
         return None
-    return {
-        "oggi_mm": round(num_o / den_o, 1) if den_o else None,
-        "mese_mm": round(num_m / den_m, 1) if den_m else None,
-        "n": n,
-    }
+
+
+def mn_prec_da_mappa(lat, lon, giorno):
+    raw = _mn_mappa_png(giorno, "prec")
+    if not raw:
+        return None
+    try:
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(raw)).convert("RGB")
+        x, y = _mn_png_xy(lat, lon, im.size[0], im.size[1])
+        return _mn_rgb_to_mm(im.getpixel((x, y)))
+    except Exception:
+        return None
+
+
+def mn_pioggia_mappa(lat, lon, raggio=15):
+    """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
+    oggi = datetime.now().date()
+    rows = []
+    for i in range(30):
+        g = oggi - timedelta(days=i)
+        mm = mn_prec_da_mappa(lat, lon, g.isoformat())
+        if mm is None:
+            continue
+        rows.append({"date": pd.Timestamp(g), "precip": round(float(mm), 1)})
+    if not rows:
+        return None
+    df = pd.DataFrame(rows).sort_values("date")
+    tot = round(float(df["precip"].sum()), 1)
+    oggi_ts = pd.Timestamp(oggi)
+    oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0]) if (df["date"] == oggi_ts).any() else 0.0
+    return {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows)}
 
 
 def _ultimi_30g(df):
@@ -3134,33 +3190,23 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return df_st, info, forecast, soil, vento
 
     # Zona scoperta: mm dalle mappe giornaliere MN (campo interpolato sul bosco)
-    mappa = mn_pioggia_mappa(lat, lon, 35)
-    if mappa and (mappa.get("mese_mm") is not None or mappa.get("oggi_mm") is not None):
-        oggi_m = float(mappa.get("oggi_mm") or 0)
-        mese_m = float(mappa.get("mese_mm") or oggi_m)
-        resto = max(0.0, mese_m - oggi_m)
-        rows = [{"date": pd.Timestamp(datetime.now().date()), "precip": oggi_m}]
-        if resto > 0:
-            rows.append({
-                "date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=10),
-                "precip": resto,
-            })
-        df_fb = pd.DataFrame(rows)
+    mappa = mn_pioggia_mappa(lat, lon, 15)
+    if mappa and mappa.get("df") is not None and len(mappa["df"]):
+        df_fb = mappa["df"]
+        oggi_m = mappa.get("oggi_mm")
+        mese_m = mappa.get("mese_mm")
         fonte = (
             "Mappe giornaliere MeteoNetwork sul bosco"
             + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-            + (f" · oggi mappa {oggi_m} mm" if oggi_m is not None else "")
-            + (f" · mese mappa {mese_m} mm" if mese_m is not None else "")
+            + (f" · oggi {oggi_m} mm" if oggi_m is not None else "")
+            + (f" · 30g mappa {mese_m} mm" if mese_m is not None else "")
         )
         info = {
             "fonte": fonte,
             "stazione": "mappa MN",
             "distanza_km": 0,
             "stima_mappa": True,
-            "giorni_pluviometro": [
-                f"mese mappa MN: {mese_m:.1f} mm",
-                f"{datetime.now().date()}: {oggi_m:.1f} mm",
-            ],
+            "giorni_pluviometro": _giorni_lista(df_fb),
             "pioggia_stazione_30g": mese_m,
         }
         return df_fb, info, forecast, soil, vento
@@ -3623,21 +3669,24 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
             except Exception:
                 pass
         if not viva or (mm30 < 5 and n_umidi < 2):
-            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 35) or {}
+            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 15) or {}
             mese_r = mappa.get("mese_mm")
             oggi_r = mappa.get("oggi_mm")
             info_meteo["stima_mappa"] = True
             info_meteo["fonte"] = (
                 "Mappe giornaliere MeteoNetwork sul bosco"
                 + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                + (f" · oggi mappa {oggi_r} mm" if oggi_r is not None else "")
-                + (f" · mese mappa {mese_r} mm" if mese_r is not None else "")
+                + (f" · oggi {oggi_r} mm" if oggi_r is not None else "")
+                + (f" · 30g mappa {mese_r} mm" if mese_r is not None else "")
             )
-            if mese_r is not None:
-                info_meteo["pioggia_stazione_30g"] = float(mese_r)
+            if mappa.get("df") is not None and len(mappa["df"]):
+                df = mappa["df"]
+                info_meteo["pioggia_stazione_30g"] = float(mese_r or 0)
                 info_meteo["giorni_pluviometro"] = [
-                    f"mese mappa MN: {float(mese_r):.1f} mm"
-                ] + ([f"{datetime.now().date()}: {float(oggi_r):.1f} mm"] if oggi_r is not None else [])
+                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                    for _, rr in mappa["df"].iterrows()
+                    if float(rr.get("precip") or 0) >= 0.2
+                ]
     giorni = info_meteo.get("giorni_pluviometro") or []
     if giorni:
         taglio = (datetime.now().date() - timedelta(days=30)).isoformat()
@@ -3655,7 +3704,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         try:
             tot = float(info_meteo["pioggia_stazione_30g"])
             oggi_mm = 0.0
-            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 35) or {}
+            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 12) or {}
             if mappa.get("oggi_mm") is not None:
                 oggi_mm = float(mappa["oggi_mm"])
             resto = max(0.0, tot - oggi_mm)
