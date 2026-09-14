@@ -267,7 +267,7 @@ def api_calcola():
         regole,
         "",
         max_km_stazione=5.0,
-        max_workers=8,
+        max_workers=3,
         usa_wc=True,
     )
 

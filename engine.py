@@ -724,8 +724,16 @@ def _mn_mappa_px(giorno, variabile="prec"):
         f"{d}/{d}_{variabile}_italia.png"
     )
     try:
-        r = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code != 200 or len(r.content) < 10000:
+        r = None
+        for _t in range(3):
+            try:
+                r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code == 200 and len(r.content) >= 10000:
+                    break
+            except Exception:
+                r = None
+                time.sleep(0.4)
+        if r is None or r.status_code != 200 or len(r.content) < 10000:
             return None
         from PIL import Image
         import io
@@ -1759,7 +1767,7 @@ def wc_catalogo():
     locale = _wc_catalogo_file()
     s = _wc_session()
     try:
-        r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=60)
+        r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=12)
         txt = r.text or ""
         js = r.json() if txt.lstrip()[:1] == "{" else None
         devs = (js or {}).get("devices") or []
@@ -1933,7 +1941,7 @@ def mn_catalogo_pubblico():
                 "Referer": "https://www.meteonetwork.eu/it/stations-list",
                 "Accept": "application/json",
             },
-            timeout=90,
+            timeout=15,
         )
         rows = (r.json() or {}).get("stations") or []
     except Exception:
