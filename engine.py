@@ -703,6 +703,40 @@ PUNTI = [
     {"nome": "Umbra - Vico del Gargano", "lat": 41.900, "lon": 15.960, "tipo": "faggio", "quota": 600, "regione": "Puglia"},
     {"nome": "Etna - Ragabo", "lat": 37.810, "lon": 15.056, "tipo": "faggio", "quota": 1400, "regione": "Sicilia"},
     {"nome": "Nebrodi - Portella Femmina Morta", "lat": 37.890, "lon": 14.650, "tipo": "faggio", "quota": 1500, "regione": "Sicilia"},
+    {"nome": "Mugello - Passo del Giogo", "lat": 44.050, "lon": 11.380, "tipo": "faggio", "quota": 880, "regione": "Toscana"},
+    {"nome": "Pratomagno - Anciolina", "lat": 43.645, "lon": 11.680, "tipo": "castagno", "quota": 800, "regione": "Toscana"},
+    {"nome": "Apuane - Campocatino", "lat": 44.040, "lon": 10.230, "tipo": "faggio", "quota": 1100, "regione": "Toscana"},
+    {"nome": "Amiata - Seggiano", "lat": 42.929, "lon": 11.557, "tipo": "castagno", "quota": 700, "regione": "Toscana"},
+    {"nome": "Casentino - La Verna", "lat": 43.707, "lon": 11.931, "tipo": "faggio", "quota": 1120, "regione": "Toscana"},
+    {"nome": "Abetone - Cutigliano", "lat": 44.100, "lon": 10.756, "tipo": "faggio", "quota": 900, "regione": "Toscana"},
+    {"nome": "Lago Santo Modenese", "lat": 44.220, "lon": 10.590, "tipo": "faggio", "quota": 1500, "regione": "Emilia-Romagna"},
+    {"nome": "Febbio - Villa Minozzo", "lat": 44.300, "lon": 10.430, "tipo": "faggio", "quota": 1200, "regione": "Emilia-Romagna"},
+    {"nome": "Cerreto - Collagna", "lat": 44.347, "lon": 10.273, "tipo": "faggio", "quota": 900, "regione": "Emilia-Romagna"},
+    {"nome": "Val d'Aveto - Rezzoaglio alto", "lat": 44.540, "lon": 9.400, "tipo": "faggio", "quota": 900, "regione": "Liguria"},
+    {"nome": "Monte Beigua - Pra", "lat": 44.433, "lon": 8.563, "tipo": "faggio", "quota": 1100, "regione": "Liguria"},
+    {"nome": "Valbrevenna", "lat": 44.563, "lon": 9.102, "tipo": "castagno", "quota": 550, "regione": "Liguria"},
+    {"nome": "Val Maira - Acceglio", "lat": 44.475, "lon": 6.990, "tipo": "faggio", "quota": 1200, "regione": "Piemonte"},
+    {"nome": "Val Varaita - Sampeyre", "lat": 44.579, "lon": 7.187, "tipo": "faggio", "quota": 1000, "regione": "Piemonte"},
+    {"nome": "Biellese - Piedicavallo", "lat": 45.690, "lon": 7.946, "tipo": "faggio", "quota": 1050, "regione": "Piemonte"},
+    {"nome": "Ossola - Formazza", "lat": 46.377, "lon": 8.425, "tipo": "abete_rosso", "quota": 1300, "regione": "Piemonte"},
+    {"nome": "Val Masino", "lat": 46.215, "lon": 9.576, "tipo": "faggio", "quota": 900, "regione": "Lombardia"},
+    {"nome": "Valtellina - Aprica", "lat": 46.154, "lon": 10.151, "tipo": "abete_rosso", "quota": 1200, "regione": "Lombardia"},
+    {"nome": "Valle Camonica - Edolo", "lat": 46.178, "lon": 10.333, "tipo": "abete_rosso", "quota": 700, "regione": "Lombardia"},
+    {"nome": "Adamello - Ponte di Legno TN", "lat": 46.210, "lon": 10.640, "tipo": "abete_rosso", "quota": 1600, "regione": "Trentino-Alto Adige"},
+    {"nome": "Val di Non - Ruffre", "lat": 46.455, "lon": 11.060, "tipo": "abete_rosso", "quota": 1200, "regione": "Trentino-Alto Adige"},
+    {"nome": "Tesino - Castello Tesino", "lat": 46.063, "lon": 11.633, "tipo": "abete_rosso", "quota": 900, "regione": "Trentino-Alto Adige"},
+    {"nome": "Altopiano di Asiago - Gallio", "lat": 45.890, "lon": 11.557, "tipo": "faggio", "quota": 1100, "regione": "Veneto"},
+    {"nome": "Cansiglio - Pian Cansiglio", "lat": 46.064, "lon": 12.410, "tipo": "faggio", "quota": 1000, "regione": "Veneto"},
+    {"nome": "Lessinia - San Giorgio", "lat": 45.658, "lon": 11.000, "tipo": "faggio", "quota": 1400, "regione": "Veneto"},
+    {"nome": "Tarvisio - Val Saisera", "lat": 46.510, "lon": 13.480, "tipo": "abete_rosso", "quota": 800, "regione": "Friuli-Venezia Giulia"},
+    {"nome": "Forni Avoltri", "lat": 46.587, "lon": 12.776, "tipo": "abete_rosso", "quota": 900, "regione": "Friuli-Venezia Giulia"},
+    {"nome": "Valsavarenche", "lat": 45.590, "lon": 7.210, "tipo": "abete_rosso", "quota": 1600, "regione": "Valle d'Aosta"},
+    {"nome": "Sila Grande - Lorica est", "lat": 39.390, "lon": 16.550, "tipo": "faggio", "quota": 1400, "regione": "Calabria"},
+    {"nome": "Aspromonte - Montalto", "lat": 38.155, "lon": 15.921, "tipo": "faggio", "quota": 1700, "regione": "Calabria"},
+    {"nome": "Pollino - Colle Impiso", "lat": 39.905, "lon": 16.185, "tipo": "faggio", "quota": 1550, "regione": "Basilicata"},
+    {"nome": "Gargano - Monte Sant'Angelo boschi", "lat": 41.706, "lon": 15.955, "tipo": "leccio", "quota": 800, "regione": "Puglia"},
+    {"nome": "Etna nord - Linguaglossa", "lat": 37.843, "lon": 15.142, "tipo": "faggio", "quota": 1100, "regione": "Sicilia"},
+    {"nome": "Gennargentu - Arzana", "lat": 39.917, "lon": 9.528, "tipo": "leccio", "quota": 700, "regione": "Sardegna"},
     {"nome": "Supramonte - Orgosolo", "lat": 40.205, "lon": 9.352, "tipo": "leccio", "quota": 700, "regione": "Sardegna"},
 ]
 
@@ -1917,7 +1951,7 @@ def wc_catalogo():
             lat, lon = float(d[2]), float(d[3])
         except Exception:
             continue
-        if not (39.8 <= lat <= 43.2 and 12.2 <= lon <= 16.3):
+        if not (36.5 <= lat <= 47.2 and 6.5 <= lon <= 18.6):
             continue
         code = str(d[0])
         out.append({
@@ -3162,17 +3196,9 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         df_fb = mappa["df"]
         oggi_m = mappa.get("oggi_mm")
         mese_m = mappa.get("mese_mm")
-        dpc = {}
-        try:
-            dpc = dpc_pioggia_punto(lat, lon) or {}
-        except Exception:
-            dpc = {}
-        dpc_mm = dpc.get("mm_24h")
-        extra = f" · DPC 24h {dpc_mm} mm" if dpc_mm is not None else " · DPC 24h n/d"
         fonte = (
-            "Stazione assente · Mappe MN 30g + rete DPC 24h"
-            + extra
-            + " · Non al 100% come una stazione sul bosco"
+            "Stazione assente · Mappe giornaliere MN sul bosco"
+            + " · Non al 100% come una stazione"
             + (f" · oggi MN {oggi_m} mm" if oggi_m is not None else "")
             + (f" · 30g MN {mese_m} mm" if mese_m is not None else "")
         )
@@ -3677,18 +3703,9 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
             mese_r = mappa.get("mese_mm")
             oggi_r = mappa.get("oggi_mm")
             info_meteo["stima_mappa"] = True
-            dpc = {}
-            try:
-                dpc = dpc_pioggia_punto(p["lat"], p["lon"]) or {}
-            except Exception:
-                dpc = {}
-            dpc_mm = dpc.get("mm_24h")
-            info_meteo["dpc_24h"] = dpc_mm
-            extra_dpc = f" · DPC 24h {dpc_mm} mm" if dpc_mm is not None else " · DPC 24h n/d"
             info_meteo["fonte"] = (
-                "Stazione assente/incompleta · Mappe MN 30g + rete DPC 24h"
-                + extra_dpc
-                + " · Non al 100% come una stazione sul bosco"
+                "Stazione assente/incompleta · Mappe MN sul bosco"
+                + " · Non al 100% come una stazione"
                 + (f" · oggi MN {oggi_r} mm" if oggi_r is not None else "")
                 + (f" · 30g MN {mese_r} mm" if mese_r is not None else "")
             )
