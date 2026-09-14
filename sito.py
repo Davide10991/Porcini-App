@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 
 from flask import (
     Flask,
@@ -21,7 +22,29 @@ import engine
 
 app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
+CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 CACHE = {"risultati": []}
+
+
+def _carica_cache():
+    if CACHE["risultati"]:
+        return
+    if CACHE_FILE.exists():
+        try:
+            CACHE["risultati"] = json.loads(CACHE_FILE.read_text())
+        except Exception:
+            CACHE["risultati"] = []
+
+
+def _salva_cache(rows):
+    CACHE["risultati"] = rows
+    try:
+        CACHE_FILE.write_text(json.dumps(rows, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+_carica_cache()
 
 
 def login_required(fn):
@@ -141,7 +164,7 @@ def api_calcola():
         regole,
         "",
         max_km_stazione=5.0,
-        max_workers=4,
+        max_workers=8,
         usa_wc=True,
     )
 
@@ -154,14 +177,30 @@ def api_calcola():
         for r in ris
         if (zona_radar(r) and f_radar) or ((not zona_radar(r)) and f_staz)
     ]
-    CACHE["risultati"] = view
+    view_j = [_jsonable(r) for r in view]
+    _salva_cache(view_j)
     engine.CALC_PROGRESS.update({"pct": 100, "text": "Fatto"})
     return jsonify(
         {
             "n": len(view),
             "n_alto": sum(1 for r in view if r.get("score", 0) >= 70),
             "n_medio": sum(1 for r in view if 50 <= r.get("score", 0) < 70),
-            "zone": [_jsonable(r) for r in view],
+            "zone": view_j,
+        }
+    )
+
+
+@app.route("/api/ultimo")
+@login_required
+def api_ultimo():
+    _carica_cache()
+    view = CACHE.get("risultati") or []
+    return jsonify(
+        {
+            "n": len(view),
+            "n_alto": sum(1 for r in view if float(r.get("score") or 0) >= 70),
+            "n_medio": sum(1 for r in view if 50 <= float(r.get("score") or 0) < 70),
+            "zone": view,
         }
     )
 
