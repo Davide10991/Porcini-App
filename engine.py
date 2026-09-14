@@ -9,7 +9,7 @@ from math import radians, sin, cos, sqrt, atan2, exp
 import io
 import json
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from functools import lru_cache
 import time
 
@@ -3830,26 +3830,44 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
         pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone (0%)")
     fatti = 0
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(3, max_workers))) as ex:
         fut = {
             ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn, usa_wc): p
             for p in punti
         }
-        for f in as_completed(fut):
-            try:
-                risultati.append(f.result())
-            except Exception as e:
-                p = fut[f]
-                risultati.append({
-                    **p,
-                    "score": 0,
-                    "livello": f"Errore: {e}",
-                    "dettaglio": {},
-                    "meteo": {"fonte": "errore", "stazione": "n/d", "distanza_km": None},
-                })
-            fatti += 1
-            pct = int(fatti * 100 / tot)
-            barra.progress(pct / 100, text=f"Calcolo {fatti}/{tot} zone ({pct}%)")
+        pending = set(fut)
+        while pending:
+            finiti, pending = wait(pending, timeout=20, return_when=FIRST_COMPLETED)
+            if not finiti:
+                for f in list(pending):
+                    p = fut[f]
+                    risultati.append({
+                        **p,
+                        "score": 12,
+                        "livello": "timeout rete — riprova questa zona col click",
+                        "dettaglio": {"precip_totale_30g": "n/d", "specie_testo": "n/d"},
+                        "meteo": {"fonte": "timeout", "stazione": "n/d", "stima_mappa": True},
+                    })
+                    fatti += 1
+                    pct = int(fatti * 100 / tot)
+                    barra.progress(pct / 100, text=f"Calcolo {fatti}/{tot} zone ({pct}%)")
+                pending = set()
+                break
+            for f in finiti:
+                try:
+                    risultati.append(f.result(timeout=1))
+                except Exception as e:
+                    p = fut[f]
+                    risultati.append({
+                        **p,
+                        "score": 0,
+                        "livello": f"Errore: {e}",
+                        "dettaglio": {},
+                        "meteo": {"fonte": "errore", "stazione": "n/d", "distanza_km": None},
+                    })
+                fatti += 1
+                pct = int(fatti * 100 / tot)
+                barra.progress(pct / 100, text=f"Calcolo {fatti}/{tot} zone ({pct}%)")
     barra.progress(1.0, text=f"Calcolo {tot}/{tot} zone (100%)")
     return sorted(risultati, key=lambda x: x["score"], reverse=True)
 
