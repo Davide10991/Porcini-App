@@ -266,7 +266,7 @@ def api_calcola():
         punti,
         regole,
         "",
-        max_km_stazione=5.0,
+        max_km_stazione=8.0,
         max_workers=3,
         usa_wc=True,
     )

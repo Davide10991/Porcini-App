@@ -1763,11 +1763,11 @@ def _wc_catalogo_file():
 
 @st.cache_data(ttl=21600)
 def wc_catalogo():
-    """Stazioni WeatherCloud Centro-Sud. Live + file di riserva."""
+    """Stazioni WeatherCloud Centro-Sud. File locale subito, live se risponde."""
     locale = _wc_catalogo_file()
     s = _wc_session()
     try:
-        r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=12)
+        r = s.get("https://app.weathercloud.net/map/bgdevices", timeout=20)
         txt = r.text or ""
         js = r.json() if txt.lstrip()[:1] == "{" else None
         devs = (js or {}).get("devices") or []
@@ -1829,6 +1829,15 @@ def wc_mese_mm(device_id):
             recs.append({"date": pd.Timestamp(dt), "precip": float(mm or 0)})
         except Exception:
             continue
+    if not recs:
+        store = _carica_giorni_file()
+        did = str(_wc_id(device_id))
+        oggi = datetime.now().date()
+        for i in range(40):
+            d = oggi - timedelta(days=i)
+            old = store.get(f"wc:{did}|{d.isoformat()}") or {}
+            if old:
+                recs.append({"date": pd.Timestamp(d), "precip": float(old.get("precip") or 0)})
     if not recs:
         return None
     return pd.DataFrame(recs).sort_values("date")
@@ -1903,6 +1912,18 @@ def wc_mese_pioggia(device_id):
         _salva_giorni_file()
     except Exception:
         pass
+    if not by_day:
+        for i in range(40):
+            d = oggi - timedelta(days=i)
+            key = f"wc:{did}|{d.isoformat()}"
+            old = store.get(key) or {}
+            if not old:
+                continue
+            rec = {"date": pd.Timestamp(d), "precip": float(old.get("precip") or 0)}
+            for k in ("t_max", "t_min", "t_med", "vento_max"):
+                if old.get(k) is not None:
+                    rec[k] = float(old[k])
+            by_day[d] = rec
     if not by_day:
         return None
     df = pd.DataFrame(list(by_day.values()))
@@ -3555,7 +3576,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
         }
         for f in as_completed(fut):
             try:
-                risultati.append(f.result(timeout=35))
+                risultati.append(f.result(timeout=90))
             except Exception as e:
                 p = fut[f]
                 risultati.append({
