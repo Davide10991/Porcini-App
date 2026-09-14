@@ -794,6 +794,23 @@ MN_PREC_PALETTE = [
     ((135, 13, 13), 250.0),
 ]
 
+# scale tipiche mappe daily MN (approssimate sulla legenda)
+MN_TMIN_PALETTE = [
+    ((40, 0, 80), -8), ((20, 40, 180), -2), ((40, 120, 230), 4),
+    ((80, 200, 220), 8), ((160, 230, 140), 12), ((230, 230, 80), 16),
+    ((250, 160, 40), 20), ((240, 60, 30), 24), ((160, 20, 20), 28),
+]
+MN_TMAX_PALETTE = [
+    ((40, 0, 80), 0), ((20, 40, 180), 8), ((40, 120, 230), 14),
+    ((80, 200, 220), 18), ((160, 230, 140), 22), ((230, 230, 80), 26),
+    ((250, 160, 40), 30), ((240, 60, 30), 34), ((160, 20, 20), 38),
+]
+MN_WIND_PALETTE = [
+    ((230, 230, 230), 2), ((180, 220, 255), 8), ((80, 180, 120), 15),
+    ((200, 220, 60), 25), ((250, 160, 40), 40), ((230, 40, 30), 60),
+    ((120, 0, 80), 80),
+]
+
 
 def _mn_png_xy(lat, lon, w=1026, h=1252):
     x = 50 + (float(lon) - 6.2) / (18.8 - 6.2) * 900
@@ -801,21 +818,28 @@ def _mn_png_xy(lat, lon, w=1026, h=1252):
     return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
 
 
+def _mn_rgb_to_scala(rgb, palette, neutro=True):
+    r, g, b = rgb[:3]
+    if neutro and abs(r - g) < 18 and abs(g - b) < 18:
+        return None
+    best, bd = None, 1e9
+    for (pr, pg, pb), val in palette:
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if d < bd:
+            bd, best = d, val
+    if bd > 12000:
+        return None
+    return float(best)
+
+
 def _mn_rgb_to_mm(rgb):
     r, g, b = rgb[:3]
-    # mare / rilievo / neutro = 0 mm
     if abs(r - g) < 18 and abs(g - b) < 18:
         return 0.0
     if b > 230 and r > 160 and g > 200 and r < 230:
         return 0.0
-    best, bd = 0.0, 1e9
-    for (pr, pg, pb), mm in MN_PREC_PALETTE:
-        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
-        if d < bd:
-            bd, best = d, mm
-    if bd > 9000:
-        return 0.0
-    return float(best)
+    v = _mn_rgb_to_scala(rgb, MN_PREC_PALETTE, neutro=False)
+    return 0.0 if v is None else v
 
 
 _MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
@@ -864,24 +888,32 @@ def _mn_mappa_px(giorno, variabile="prec"):
         return None
 
 
-def mn_prec_da_mappa(lat, lon, giorno):
-    pack = _mn_mappa_px(giorno, "prec")
+def _mn_sample(lat, lon, giorno, variabile, decoder):
+    pack = _mn_mappa_px(giorno, variabile)
     if not pack:
         return None
     try:
         w, h, buf = pack
         x, y = _mn_png_xy(lat, lon, w, h)
         i = (y * w + x) * 3
-        return _mn_rgb_to_mm((buf[i], buf[i + 1], buf[i + 2]))
+        return decoder((buf[i], buf[i + 1], buf[i + 2]))
     except Exception:
         return None
+
+
+def mn_prec_da_mappa(lat, lon, giorno):
+    return _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
 
 
 def mn_preload_mappe(giorni=30):
     oggi = datetime.now().date()
     fatti = 0
     def _one(i):
-        _mn_mappa_px((oggi - timedelta(days=i)).isoformat(), "prec")
+        g = (oggi - timedelta(days=i)).isoformat()
+        _mn_mappa_px(g, "prec")
+        _mn_mappa_px(g, "temp_min")
+        _mn_mappa_px(g, "temp_max")
+        _mn_mappa_px(g, "wind")
     with ThreadPoolExecutor(max_workers=4) as ex:
         for _ in ex.map(_one, range(giorni)):
             fatti += 1
@@ -940,10 +972,20 @@ def mn_pioggia_mappa(lat, lon, raggio=15):
     rows = []
     for i in range(30):
         g = oggi - timedelta(days=i)
-        mm = mn_prec_da_mappa(lat, lon, g.isoformat())
-        if mm is None:
+        iso = g.isoformat()
+        mm = mn_prec_da_mappa(lat, lon, iso)
+        tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
+        tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
+        vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
+        if mm is None and tmin is None and tmax is None:
             continue
-        rows.append({"date": pd.Timestamp(g), "precip": round(float(mm), 1)})
+        rows.append({
+            "date": pd.Timestamp(g),
+            "precip": round(float(mm or 0), 1),
+            "t_min": None if tmin is None else round(float(tmin), 1),
+            "t_max": None if tmax is None else round(float(tmax), 1),
+            "vento_max": None if vento is None else round(float(vento), 1),
+        })
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
@@ -3737,29 +3779,44 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
             if len(data) >= 10 and data[:10] >= taglio:
                 tenuti.append(g)
         info_meteo["giorni_pluviometro"] = tenuti
-    if info_meteo.get("stima_mappa") and info_meteo.get("pioggia_stazione_30g"):
-        try:
-            tot = float(info_meteo["pioggia_stazione_30g"])
-            oggi_mm = 0.0
-            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 12) or {}
-            if mappa.get("oggi_mm") is not None:
-                oggi_mm = float(mappa["oggi_mm"])
-            resto = max(0.0, tot - oggi_mm)
-            df = pd.DataFrame([
-                {"date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=10), "precip": resto},
-                {"date": pd.Timestamp(datetime.now().date()), "precip": oggi_mm},
-            ])
-        except Exception:
-            pass
-    elif df is not None and len(df) and "precip" in df.columns:
+    if (df is None or len(df) == 0) and (info_meteo.get("giorni_pluviometro") or []):
+        rows = []
+        for g in info_meteo.get("giorni_pluviometro") or []:
+            gs = str(g)
+            try:
+                data = gs.split(":")[0].strip()[:10]
+                mm = float(gs.rsplit(":", 1)[-1].replace("mm", "").strip().replace(",", "."))
+                rows.append({"date": pd.Timestamp(data), "precip": mm})
+            except Exception:
+                continue
+        if rows:
+            df = pd.DataFrame(rows)
+    if df is not None and len(df) and "precip" in df.columns:
         try:
             info_meteo["pioggia_stazione_30g"] = round(float(pd.to_numeric(df["precip"], errors="coerce").sum()), 1)
         except Exception:
             pass
-    score, livello, det = calcola_punteggio(
-        df, p["tipo"], regole, quota=p.get("quota", 1000),
-        soil=soil, forecast=forecast, vento=vento,
-    )
+    try:
+        score, livello, det = calcola_punteggio(
+            df, p["tipo"], regole, quota=p.get("quota", 1000),
+            soil=soil, forecast=forecast, vento=vento,
+        )
+    except Exception:
+        tot = 0.0
+        try:
+            tot = float(info_meteo.get("pioggia_stazione_30g") or 0)
+        except Exception:
+            tot = 0.0
+        score = 35 if tot >= 40 else (20 if tot >= 15 else 8)
+        livello = "mappa MN"
+        det = {
+            "precip_totale_30g": tot,
+            "t_max_media": "n/d",
+            "t_min_media": "n/d",
+            "specie_testo": "n/d",
+        }
+    if not det.get("precip_totale_30g") and info_meteo.get("pioggia_stazione_30g") is not None:
+        det["precip_totale_30g"] = info_meteo.get("pioggia_stazione_30g")
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
