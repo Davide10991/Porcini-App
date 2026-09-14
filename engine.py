@@ -772,6 +772,52 @@ def mn_preload_mappe(giorni=30):
             CALC_PROGRESS.update({"pct": max(1, int(fatti * 12 / giorni)), "text": f"Mappe MN {fatti}/{giorni}"})
 
 
+def dpc_pioggia_punto(lat, lon):
+    """Cumulata DPC ultime 24h (rete pluviometri ufficiali + interpolazione)."""
+    headers = {
+        "Origin": "https://radar.protezionecivile.it",
+        "Referer": "https://radar.protezionecivile.it/",
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        last = requests.get(
+            "https://radar-api.protezionecivile.it/findLastProductByType",
+            params={"type": "CUM24", "origin": "https://radar.protezionecivile.it"},
+            headers=headers,
+            timeout=10,
+        )
+        js = last.json() if last.status_code == 200 else {}
+        prods = js.get("lastProducts") or []
+        ts = prods[0].get("time") if prods else None
+    except Exception:
+        ts = None
+    mm = None
+    try:
+        pad = 0.04
+        url = (
+            "https://radar-geowebcache.protezionecivile.it/service/wms"
+            "?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo"
+            "&LAYERS=radar:srt24&QUERY_LAYERS=radar:srt24"
+            "&INFO_FORMAT=application/json&SRS=EPSG:4326"
+            f"&BBOX={lon-pad},{lat-pad},{lon+pad},{lat+pad}"
+            "&WIDTH=11&HEIGHT=11&X=5&Y=5"
+        )
+        r = requests.get(url, headers=headers, timeout=12)
+        data = r.json() if r.status_code == 200 else {}
+        feats = data.get("features") or []
+        if feats:
+            props = feats[0].get("properties") or {}
+            for k, v in props.items():
+                try:
+                    mm = float(v)
+                    break
+                except Exception:
+                    continue
+    except Exception:
+        mm = None
+    return {"mm_24h": mm, "ts": ts, "fonte": "DPC CUM24 / SRT24"}
+
+
 def mn_pioggia_mappa(lat, lon, raggio=15):
     """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
     oggi = datetime.now().date()
@@ -3034,15 +3080,24 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         df_fb = mappa["df"]
         oggi_m = mappa.get("oggi_mm")
         mese_m = mappa.get("mese_mm")
+        dpc = {}
+        try:
+            dpc = dpc_pioggia_punto(lat, lon) or {}
+        except Exception:
+            dpc = {}
+        dpc_mm = dpc.get("mm_24h")
+        extra = f" · DPC 24h {dpc_mm} mm" if dpc_mm is not None else " · DPC 24h n/d"
         fonte = (
-            "Mappe giornaliere MeteoNetwork sul bosco"
-            + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-            + (f" · oggi {oggi_m} mm" if oggi_m is not None else "")
-            + (f" · 30g mappa {mese_m} mm" if mese_m is not None else "")
+            "Stazione assente · Mappe MN 30g + rete DPC 24h"
+            + extra
+            + " · Non al 100% come una stazione sul bosco"
+            + (f" · oggi MN {oggi_m} mm" if oggi_m is not None else "")
+            + (f" · 30g MN {mese_m} mm" if mese_m is not None else "")
         )
         info = {
             "fonte": fonte,
-            "stazione": "mappa MN",
+            "stazione": "mappa MN + DPC",
+            "dpc_24h": dpc_mm,
             "distanza_km": 0,
             "stima_mappa": True,
             "giorni_pluviometro": _giorni_lista(df_fb),
@@ -3425,6 +3480,34 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
             f"{s['nome']} ({s['stato']})" for s in specie if s["stato"] != "fuori stagione"
         ) or "nessuna in stagione",
     }
+    intercetta = {
+        "faggio": 0.72, "castagno": 0.75, "quercia": 0.73, "leccio": 0.68,
+        "misto_carpino_quercia": 0.74, "abete_bianco": 0.65, "abete_rosso": 0.64,
+    }.get(str(tipo_bosco or "").lower(), 0.72)
+    efficace = round(float(precip_totale) * intercetta, 1) if precip_totale else 0.0
+    suolo8 = suolo20 = None
+    if isinstance(soil, dict):
+        suolo8 = soil.get("umidita_8cm") or soil.get("soil_moisture_0_to_7cm") or soil.get("u8")
+        suolo20 = soil.get("umidita_20cm") or soil.get("soil_moisture_7_to_28cm") or soil.get("u20")
+    manca = []
+    if precip_totale < 40:
+        manca.append(f"acqua 30g {precip_totale:.0f} mm su 40")
+    if t_min_view is not None:
+        try:
+            if float(t_min_view) > 14:
+                manca.append(f"minime alte ({float(t_min_view):.1f} °C)")
+        except Exception:
+            pass
+    if fattore_v < 0.6:
+        manca.append("vento persistente che asciuga")
+    if not attive:
+        manca.append("nessuna buttata aperta")
+    dettaglio["pioggia_lorda_30g"] = round(float(precip_totale), 1)
+    dettaglio["pioggia_efficace"] = efficace
+    dettaglio["intercetta_chioma"] = intercetta
+    dettaglio["suolo_8cm"] = suolo8 if suolo8 is not None else "n/d"
+    dettaglio["suolo_20cm"] = suolo20 if suolo20 is not None else "n/d"
+    dettaglio["cosa_manca"] = " · ".join(manca) if manca else "fattori allineati"
 
     # senza buttata aperta non è verde, anche con 60 mm a inizio mese
     if not attive:
@@ -3512,11 +3595,20 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
             mese_r = mappa.get("mese_mm")
             oggi_r = mappa.get("oggi_mm")
             info_meteo["stima_mappa"] = True
+            dpc = {}
+            try:
+                dpc = dpc_pioggia_punto(p["lat"], p["lon"]) or {}
+            except Exception:
+                dpc = {}
+            dpc_mm = dpc.get("mm_24h")
+            info_meteo["dpc_24h"] = dpc_mm
+            extra_dpc = f" · DPC 24h {dpc_mm} mm" if dpc_mm is not None else " · DPC 24h n/d"
             info_meteo["fonte"] = (
-                "Mappe giornaliere MeteoNetwork sul bosco"
-                + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                + (f" · oggi {oggi_r} mm" if oggi_r is not None else "")
-                + (f" · 30g mappa {mese_r} mm" if mese_r is not None else "")
+                "Stazione assente/incompleta · Mappe MN 30g + rete DPC 24h"
+                + extra_dpc
+                + " · Non al 100% come una stazione sul bosco"
+                + (f" · oggi MN {oggi_r} mm" if oggi_r is not None else "")
+                + (f" · 30g MN {mese_r} mm" if mese_r is not None else "")
             )
             if mappa.get("df") is not None and len(mappa["df"]):
                 df = mappa["df"]
