@@ -2825,6 +2825,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         and not wc_piu_pioggia
     )
     _nz = (nome_zona or "").lower()
+    forza_agnone = "agnone" in _nz
     d_gm = distanza_km(lat, lon, 41.350254, 14.365734)
     d_vt = distanza_km(lat, lon, 41.348467, 14.525056)
     forza_piedimonte = (
@@ -2838,6 +2839,9 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             or "san gregorio matese" in _nz
         )
     )
+    if forza_agnone:
+        ha_mn_vicina = True
+        wc_piu_pioggia = False
     forza_cusano = d_vt <= 5.0 or (("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz))
     if forza_piedimonte and forza_cusano:
         if d_vt < d_gm:
@@ -3037,16 +3041,38 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     s0 = dict(extra[0][1])
                     s0["distanza_km"] = round(extra[0][0], 1)
                     vicine_pub.append(s0)
+        if forza_agnone and cat_mn:
+            for s0 in cat_mn:
+                if str(s0.get("code") or "").lower() == "mls026":
+                    s0 = dict(s0)
+                    s0["distanza_km"] = round(distanza_km(lat, lon, s0["lat"], s0["lon"]), 1)
+                    vicine_pub = [s0] + [x for x in vicine_pub if str(x.get("code") or "").lower() != "mls026"]
+                    break
         if vicine_pub:
             s = None
             for cand in vicine_pub[:6]:
                 df_chk = mn_archivio_pubblico(cand.get("code"), 2)
+                if forza_agnone and str(cand.get("code") or "").lower() == "mls026" and df_chk is not None and len(df_chk):
+                    s = cand
+                    break
                 if _mn_viva(df_chk):
                     s = cand
                     break
             if s is not None:
                 prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
                 nome_l = (nome_zona or "").lower()
+                if "agnone" in nome_l or forza_agnone:
+                    s_ag = prefer.get("mls026")
+                    if s_ag is None:
+                        for s0 in cat_mn or []:
+                            if str(s0.get("code") or "").lower() == "mls026":
+                                s_ag = dict(s0)
+                                s_ag["distanza_km"] = round(
+                                    distanza_km(lat, lon, s0["lat"], s0["lon"]), 1
+                                )
+                                break
+                    if s_ag is not None:
+                        s = s_ag
                 if "mls071" in prefer and (
                     "capracotta" in nome_l
                     or str(s.get("code") or "").lower() in {"mls052", "mls064"}
@@ -3062,7 +3088,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 df_arch = mn_archivio_pubblico(s["code"], mesi_arch)
                 if df_arch is None and mn_token:
                     df_arch = mn_dati_stazione(mn_token, s["code"], days)
-                if not _mn_viva(df_arch):
+                if not _mn_viva(df_arch) and not (forza_agnone and str(s.get("code") or "").lower() == "mls026"):
                     s = None
                 else:
                     serie = df_arch
