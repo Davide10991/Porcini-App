@@ -957,7 +957,8 @@ def _mn_rgb_to_mm(rgb):
 
 
 @st.cache_data(ttl=21600)
-def _mn_mappa_png(giorno, variabile="prec"):
+def _mn_mappa_px(giorno, variabile="prec"):
+    """Scarica e decodifica UNA volta la PNG del giorno."""
     d = str(giorno)
     url = (
         "https://cdn1.meteonetwork.it/models/malawi/wnetwork/mappe_daily/"
@@ -967,23 +968,31 @@ def _mn_mappa_png(giorno, variabile="prec"):
         r = requests.get(url, timeout=25, headers={"User-Agent": "Mozilla/5.0"})
         if r.status_code != 200 or len(r.content) < 10000:
             return None
-        return r.content
+        from PIL import Image
+        import io
+        im = Image.open(io.BytesIO(r.content)).convert("RGB")
+        return (im.size[0], im.size[1], im.tobytes())
     except Exception:
         return None
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
-    raw = _mn_mappa_png(giorno, "prec")
-    if not raw:
+    pack = _mn_mappa_px(giorno, "prec")
+    if not pack:
         return None
     try:
-        from PIL import Image
-        import io
-        im = Image.open(io.BytesIO(raw)).convert("RGB")
-        x, y = _mn_png_xy(lat, lon, im.size[0], im.size[1])
-        return _mn_rgb_to_mm(im.getpixel((x, y)))
+        w, h, buf = pack
+        x, y = _mn_png_xy(lat, lon, w, h)
+        i = (y * w + x) * 3
+        return _mn_rgb_to_mm((buf[i], buf[i + 1], buf[i + 2]))
     except Exception:
         return None
+
+
+def mn_preload_mappe(giorni=30):
+    oggi = datetime.now().date()
+    for i in range(giorni):
+        _mn_mappa_px((oggi - timedelta(days=i)).isoformat(), "prec")
 
 
 def mn_pioggia_mappa(lat, lon, raggio=15):
@@ -3729,6 +3738,11 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
 def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
+    barra = st.progress(0, text="Scarico mappe giornaliere MN…")
+    try:
+        mn_preload_mappe(30)
+    except Exception:
+        pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone (0%)")
     fatti = 0
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
