@@ -910,6 +910,45 @@ STAZIONI = [
 ]
 
 
+def mn_pioggia_mappa(lat, lon, raggio=35):
+    """Pioggia delle mappe giornaliere MN: interpolazione sul punto (stesso campo della mappa)."""
+    cat = mn_catalogo_pubblico() or []
+    num_o = den_o = num_m = den_m = 0.0
+    n = 0
+    for s in cat:
+        try:
+            dkm = max(0.3, distanza_km(lat, lon, float(s["lat"]), float(s["lon"])))
+        except Exception:
+            continue
+        if dkm > raggio:
+            continue
+        try:
+            oggi = float(s["oggi_mm"]) if s.get("oggi_mm") is not None else None
+        except Exception:
+            oggi = None
+        try:
+            mese = float(s["mese_mm"]) if s.get("mese_mm") is not None else None
+        except Exception:
+            mese = None
+        if (oggi is None or oggi == 0) and (mese is None or mese == 0):
+            continue
+        w = 1.0 / (dkm * dkm)
+        if oggi is not None:
+            num_o += w * oggi
+            den_o += w
+        if mese is not None:
+            num_m += w * mese
+            den_m += w
+        n += 1
+    if n < 1:
+        return None
+    return {
+        "oggi_mm": round(num_o / den_o, 1) if den_o else None,
+        "mese_mm": round(num_m / den_m, 1) if den_m else None,
+        "n": n,
+    }
+
+
 def _ultimi_30g(df):
     """Ogni aggiornamento: tengo solo gli ultimi 30 giorni."""
     if df is None or len(df) == 0 or "date" not in getattr(df, "columns", []):
@@ -3094,49 +3133,37 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             info["pioggia_stazione_30g"] = _mm(df_st)
             return df_st, info, forecast, soil, vento
 
-    # Zona scoperta: usa la rete realtime MN (stazione più vicina, anche oltre 8 km)
-    if cat_mn_pre and mn_near and mn_min <= 20:
-        s = dict(mn_near)
-        s["distanza_km"] = round(mn_min, 1)
-        df_fb = mn_archivio_pubblico(s.get("code"), 2)
-        if df_fb is None or not len(df_fb):
-            rows = []
-            if s.get("oggi_mm") is not None:
-                rows.append({"date": pd.Timestamp(datetime.now().date()), "precip": float(s["oggi_mm"])})
-            if s.get("mese_mm") is not None and float(s.get("mese_mm") or 0) > 0:
-                resto = max(0.0, float(s["mese_mm"]) - float(s.get("oggi_mm") or 0))
-                if resto > 0:
-                    rows.append({
-                        "date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=15),
-                        "precip": resto,
-                    })
-            df_fb = pd.DataFrame(rows) if rows else None
-        else:
-            df_fb = df_fb.copy()
-            df_fb["date"] = pd.to_datetime(df_fb["date"], errors="coerce")
-            df_fb = df_fb.dropna(subset=["date"])
-            if s.get("oggi_mm") is not None:
-                oggi_d = pd.Timestamp(datetime.now().date())
-                if (df_fb["date"].dt.normalize() == oggi_d).any():
-                    df_fb.loc[df_fb["date"].dt.normalize() == oggi_d, "precip"] = float(s["oggi_mm"])
-                else:
-                    df_fb = pd.concat([df_fb, pd.DataFrame([{"date": oggi_d, "precip": float(s["oggi_mm"])}])], ignore_index=True)
-        if df_fb is not None and len(df_fb):
-            df_fb["date"] = pd.to_datetime(df_fb["date"], errors="coerce")
-            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
-            df_fb = df_fb[df_fb["date"] >= taglio]
-            fonte = (
-                f"Mappa realtime MeteoNetwork · {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
-                + " · nessuna stazione entro 8 km"
-                + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                + (f" · mese rete {s.get('mese_mm')} mm" if s.get("mese_mm") is not None else "")
-            )
-            info = _info_stazione(s, fonte)
-            info["stima_mappa"] = True
-            info["giorni_pluviometro"] = _giorni_lista(df_fb)
-            info["pioggia_stazione_30g"] = _mm(df_fb)
-            return df_fb, info, forecast, soil, vento
+    # Zona scoperta: mm dalle mappe giornaliere MN (campo interpolato sul bosco)
+    mappa = mn_pioggia_mappa(lat, lon, 35)
+    if mappa and (mappa.get("mese_mm") is not None or mappa.get("oggi_mm") is not None):
+        oggi_m = float(mappa.get("oggi_mm") or 0)
+        mese_m = float(mappa.get("mese_mm") or oggi_m)
+        resto = max(0.0, mese_m - oggi_m)
+        rows = [{"date": pd.Timestamp(datetime.now().date()), "precip": oggi_m}]
+        if resto > 0:
+            rows.append({
+                "date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=10),
+                "precip": resto,
+            })
+        df_fb = pd.DataFrame(rows)
+        fonte = (
+            "Mappe giornaliere MeteoNetwork sul bosco"
+            + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
+            + (f" · oggi mappa {oggi_m} mm" if oggi_m is not None else "")
+            + (f" · mese mappa {mese_m} mm" if mese_m is not None else "")
+        )
+        info = {
+            "fonte": fonte,
+            "stazione": "mappa MN",
+            "distanza_km": 0,
+            "stima_mappa": True,
+            "giorni_pluviometro": [
+                f"mese mappa MN: {mese_m:.1f} mm",
+                f"{datetime.now().date()}: {oggi_m:.1f} mm",
+            ],
+            "pioggia_stazione_30g": mese_m,
+        }
+        return df_fb, info, forecast, soil, vento
 
     info["fonte"] = "Nessuna stazione MeteoNetwork/WeatherCloud nel raggio"
     return None, info, forecast, soil, vento
@@ -3596,24 +3623,49 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
             except Exception:
                 pass
         if not viva or (mm30 < 5 and n_umidi < 2):
+            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 35) or {}
+            mese_r = mappa.get("mese_mm")
+            oggi_r = mappa.get("oggi_mm")
             info_meteo["stima_mappa"] = True
             info_meteo["fonte"] = (
-                "Mappe giornaliere MeteoNetwork · archivio stazione con buchi nel mese"
+                "Mappe giornaliere MeteoNetwork sul bosco"
                 + " · Non affidabile al 100%: dati da mappe/radar rete, non da stazione sul bosco"
+                + (f" · oggi mappa {oggi_r} mm" if oggi_r is not None else "")
+                + (f" · mese mappa {mese_r} mm" if mese_r is not None else "")
             )
+            if mese_r is not None:
+                info_meteo["pioggia_stazione_30g"] = float(mese_r)
+                info_meteo["giorni_pluviometro"] = [
+                    f"mese mappa MN: {float(mese_r):.1f} mm"
+                ] + ([f"{datetime.now().date()}: {float(oggi_r):.1f} mm"] if oggi_r is not None else [])
     giorni = info_meteo.get("giorni_pluviometro") or []
     if giorni:
         taglio = (datetime.now().date() - timedelta(days=30)).isoformat()
         tenuti = []
         for g in giorni:
             gs = str(g)
+            if "mese rete" in gs.lower():
+                tenuti.append(g)
+                continue
             data = gs.split(":")[0].strip()[:10]
-            if data >= taglio or data >= datetime.now().strftime("%Y-%m-%d")[:7]:
-                # accetta solo YYYY-MM-DD negli ultimi 30g
-                if len(data) >= 10 and data[:10] >= taglio:
-                    tenuti.append(g)
+            if len(data) >= 10 and data[:10] >= taglio:
+                tenuti.append(g)
         info_meteo["giorni_pluviometro"] = tenuti
-    if df is not None and len(df) and "precip" in df.columns:
+    if info_meteo.get("stima_mappa") and info_meteo.get("pioggia_stazione_30g"):
+        try:
+            tot = float(info_meteo["pioggia_stazione_30g"])
+            oggi_mm = 0.0
+            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 35) or {}
+            if mappa.get("oggi_mm") is not None:
+                oggi_mm = float(mappa["oggi_mm"])
+            resto = max(0.0, tot - oggi_mm)
+            df = pd.DataFrame([
+                {"date": pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=10), "precip": resto},
+                {"date": pd.Timestamp(datetime.now().date()), "precip": oggi_mm},
+            ])
+        except Exception:
+            pass
+    elif df is not None and len(df) and "precip" in df.columns:
         try:
             info_meteo["pioggia_stazione_30g"] = round(float(pd.to_numeric(df["precip"], errors="coerce").sum()), 1)
         except Exception:
