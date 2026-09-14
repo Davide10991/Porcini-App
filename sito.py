@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import smtplib
 from datetime import datetime
+from email.mime.text import MIMEText
 from functools import wraps
 from pathlib import Path
 
+from werkzeug.security import check_password_hash, generate_password_hash
 from flask import (
     Flask,
     Response,
@@ -23,7 +27,57 @@ import engine
 app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
+USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": []}
+
+
+def _utenti():
+    if USERS_FILE.exists():
+        try:
+            return json.loads(USERS_FILE.read_text())
+        except Exception:
+            return {}
+    return {}
+
+
+def _salva_utenti(d):
+    USERS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+
+
+def _smtp_conf():
+    p = Path(__file__).resolve().parent / "smtp.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            pass
+    return {
+        "host": os.environ.get("BOLETUS_SMTP_HOST", "smtp.gmail.com"),
+        "port": int(os.environ.get("BOLETUS_SMTP_PORT", "587")),
+        "user": os.environ.get("BOLETUS_SMTP_USER", ""),
+        "password": os.environ.get("BOLETUS_SMTP_PASS", ""),
+        "from": os.environ.get("BOLETUS_SMTP_FROM", "") or os.environ.get("BOLETUS_SMTP_USER", ""),
+    }
+
+
+def _invia_registrazione(dest):
+    cfg = _smtp_conf()
+    if not cfg.get("user") or not cfg.get("password"):
+        return False
+    msg = MIMEText(
+        "Ciao,\n\nla registrazione a Boletus Map è andata a buon fine.\n"
+        f"Account: {dest}\n\nBuone cercate.\n",
+        "plain",
+        "utf-8",
+    )
+    msg["Subject"] = "Registrazione Boletus Map"
+    msg["From"] = cfg.get("from") or cfg["user"]
+    msg["To"] = dest
+    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
+        s.starttls()
+        s.login(cfg["user"], cfg["password"])
+        s.send_message(msg)
+    return True
 
 
 def _carica_cache():
@@ -76,12 +130,53 @@ def _jsonable(obj):
 def login():
     err = ""
     if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
         pw = (request.form.get("password") or "").strip()
+        users = _utenti()
         if pw == engine.GUEST_PASS:
             session["ok"] = True
+            session["email"] = email or "ospite"
             return redirect(url_for("home"))
-        err = "Password errata"
+        rec = users.get(email)
+        if rec and check_password_hash(rec.get("hash", ""), pw):
+            session["ok"] = True
+            session["email"] = email
+            return redirect(url_for("home"))
+        err = "Email o password errati"
     return render_template("login.html", errore=err)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    err = ""
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        pw = (request.form.get("password") or "").strip()
+        pw2 = (request.form.get("password2") or "").strip()
+        if "@" not in email or "." not in email.split("@")[-1]:
+            err = "Email non valida"
+        elif len(pw) < 6:
+            err = "Password almeno 6 caratteri"
+        elif pw != pw2:
+            err = "Le password non coincidono"
+        else:
+            users = _utenti()
+            if email in users:
+                err = "Questa email è già registrata"
+            else:
+                users[email] = {
+                    "hash": generate_password_hash(pw),
+                    "quando": datetime.now().isoformat(timespec="seconds"),
+                }
+                _salva_utenti(users)
+                try:
+                    _invia_registrazione(email)
+                except Exception:
+                    pass
+                session["ok"] = True
+                session["email"] = email
+                return redirect(url_for("home"))
+    return render_template("register.html", errore=err)
 
 
 @app.route("/logout")
