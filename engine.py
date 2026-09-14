@@ -1723,7 +1723,12 @@ def _tabella_bosco(df):
     )
 
 
+_WC_SESS = None
+
 def _wc_session():
+    global _WC_SESS
+    if _WC_SESS is not None:
+        return _WC_SESS
     s = requests.Session()
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -1732,9 +1737,10 @@ def _wc_session():
         "Accept": "application/json,text/javascript,*/*",
     })
     try:
-        s.get("https://app.weathercloud.net/", timeout=20)
+        s.get("https://app.weathercloud.net/", timeout=8)
     except Exception:
         pass
+    _WC_SESS = s
     return s
 
 
@@ -1807,7 +1813,7 @@ def _wc_evolution(device_id, variable):
         r = s.post(
             "https://app.weathercloud.net/device/evolution",
             data={"device": did, "variable": str(variable), "period": "month"},
-            timeout=25,
+            timeout=(4, 10),
         )
         return ((r.json() or {}).get("data") or {}).get("values") or {}
     except Exception:
@@ -3576,7 +3582,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
         }
         for f in as_completed(fut):
             try:
-                risultati.append(f.result(timeout=90))
+                risultati.append(f.result())
             except Exception as e:
                 p = fut[f]
                 risultati.append({
