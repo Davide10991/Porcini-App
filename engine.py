@@ -3555,7 +3555,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn
         }
         for f in as_completed(fut):
             try:
-                risultati.append(f.result())
+                risultati.append(f.result(timeout=35))
             except Exception as e:
                 p = fut[f]
                 risultati.append({
