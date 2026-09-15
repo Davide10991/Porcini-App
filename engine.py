@@ -3701,10 +3701,19 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
                 n_gg = 1
                 giorni_cluster = [mm]
             elif last is not None and (giorno - last).days <= 4:
-                acc += mm
-                acc_eff += _mm_efficaci(mm)
-                n_gg += 1
-                giorni_cluster.append(mm)
+                # già una spugnata e 2+ giorni di pausa: nuova onda, non un unico blocco
+                if acc_eff >= 38 and (giorno - last).days >= 2:
+                    eventi.append((last or start, acc, acc_eff, n_gg, start))
+                    start = giorno
+                    acc = mm
+                    acc_eff = _mm_efficaci(mm)
+                    n_gg = 1
+                    giorni_cluster = [mm]
+                else:
+                    acc += mm
+                    acc_eff += _mm_efficaci(mm)
+                    n_gg += 1
+                    giorni_cluster.append(mm)
             else:
                 eventi.append((last or start, acc, acc_eff, n_gg, start))
                 start = giorno
@@ -3728,6 +3737,14 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
         if len(prec_prima):
             siccita = float(prec_prima["precip"].sum()) < 8
         soglia = _soglia_spugnata(t_max_media, siccita)
+        terreno_umido = False
+        if out:
+            prev_pioggia = pd.to_datetime(out[-1]["data_pioggia"])
+            if (pd.Timestamp(data_start) - prev_pioggia).days <= 22:
+                terreno_umido = True
+        ottimale = (16 <= float(t_max_media or 20) <= 24) and float(fattore_v or 1) >= 0.7
+        if terreno_umido:
+            soglia *= 0.52 if ottimale else 0.62
         if mm_eff < soglia and mm < soglia:
             continue
         # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
@@ -3761,6 +3778,10 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
                 pass
         durata = int(max(8, min(18, durata)))
         attesa = int(giorni_attesa)
+        if terreno_umido and ottimale:
+            attesa = max(7, attesa - 3)
+        elif terreno_umido:
+            attesa = max(8, attesa - 1)
         inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
         dopo = d[d["date"] >= pd.Timestamp(data_evt)]
@@ -3774,6 +3795,12 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
         attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
         if ultima_umida is not None and (oggi - ultima_umida).days >= 12:
             attiva = False
+        incrocio = False
+        if out:
+            p = out[-1]
+            if pd.to_datetime(p["inizio"]) <= fine and pd.to_datetime(p["fine"]) >= inizio:
+                incrocio = True
+                p["incrocio"] = True
         out.append({
             "pioggia_mm": round(float(mm), 1),
             "pioggia_efficace": round(float(mm_eff), 1),
@@ -3783,6 +3810,8 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             "inizio": inizio.date().isoformat(),
             "fine": fine.date().isoformat(),
             "attiva": attiva,
+            "incrocio": incrocio,
+            "onda": len(out) + 1,
             "in_attesa": bool(inizio.normalize() > oggi),
             "giorni_alla_nascita": int((inizio.normalize() - oggi).days) if inizio.normalize() > oggi else 0,
             "giorni_dal_inizio": int((oggi - inizio.normalize()).days) + 1 if attiva else 0,
@@ -3814,20 +3843,39 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
     attive = [b for b in buttate if b.get("attiva")]
     future = [b for b in buttate if b.get("in_attesa") or pd.to_datetime(b["inizio"]) > oggi]
     if attive:
+        def _riga(b):
+            return (
+                f"{b['pioggia_mm']} mm il {b['data_pioggia']} → "
+                f"{b['inizio']}–{b['fine']}"
+            )
+        if len(attive) >= 2 or (attive and future):
+            pezzi = [_riga(b) for b in attive]
+            extra = ""
+            if future:
+                n = future[0]
+                extra = (
+                    f" Seconda onda in arrivo dal {n['inizio']} "
+                    f"(ancora {n.get('giorni_alla_nascita', '?')} gg, pioggia {n['pioggia_mm']} mm il {n['data_pioggia']})."
+                )
+            return {
+                "fase": "INCROCIO",
+                "testo": (
+                    "Buttate INCROCIATE: una nuova si sovrappone alla prima "
+                    "(ripioggia durante la buttata, terreno già umido). "
+                    + " · ".join(pezzi) + extra
+                ),
+            }
         b = attive[-1]
         restano = b.get("giorni_alla_fine")
         giorno = b.get("giorni_dal_inizio") or 1
-        extra = ""
-        if len(attive) >= 2:
-            extra = " Buttate incrociate (una nuova sopra la vecchia)."
         return {
             "fase": "IN CORSO",
             "testo": (
                 f"Buttata INIZIATA il {b['inizio']} — oggi è il giorno {giorno}. "
                 f"Resta aperta fino al {b['fine']}"
                 + (f" ({restano} giorni)" if restano is not None else "")
-                + f". Innescata da {b['pioggia_mm']} mm il {b['data_pioggia']}."
-                + extra
+                + f". Innescata da {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                "Se ripiove abbastanza con temperature ok, può incrociarsi una seconda."
             ),
         }
     if future:
