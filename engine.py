@@ -740,6 +740,78 @@ PUNTI = [
     {"nome": "Supramonte - Orgosolo", "lat": 40.205, "lon": 9.352, "tipo": "leccio", "quota": 700, "regione": "Sardegna"},
 ]
 
+
+def classifica_bosco(nome="", quota=800, regione="", lat=42.0, tipo_hint=None):
+    """Albero del bosco da quota, nome e regione — non lasciare tutto faggio."""
+    n = (nome or "").lower()
+    q = int(quota or 800)
+    r = regione or ""
+    if "lecc" in n:
+        return "leccio"
+    if "castagn" in n:
+        return "castagno"
+    if any(k in n for k in ("querc", "cerret", "roverel", "farnet")):
+        return "quercia"
+    if "carpino" in n:
+        return "misto_carpino_quercia"
+    if any(k in n for k in ("abete rosso", "pecceta", "peccia", "peccio")):
+        return "abete_rosso"
+    if any(k in n for k in ("abete bianco", "abetina")):
+        return "abete_bianco"
+    if any(k in n for k in ("cansiglio", "casentin", "camaldol", "vallombros", "foresta umbra", "umbra -")):
+        return "faggio"
+    alpino = r in ("Valle d'Aosta", "Trentino-Alto Adige") or (
+        r in ("Piemonte", "Lombardia", "Friuli-Venezia Giulia") and float(lat or 0) >= 45.5
+    ) or any(k in n for k in ("dolomit", "adamello", "ortles", "formazza", "tarvis", "saisera", "valtellina"))
+    if alpino:
+        if q >= 1200:
+            return "abete_rosso"
+        if q >= 900:
+            return "abete_bianco"
+        if q >= 600:
+            return "faggio"
+        return "castagno"
+    if r == "Sardegna":
+        return "leccio" if q < 1000 else "faggio"
+    if r == "Sicilia" and q < 1000:
+        return "leccio"
+    if r == "Puglia" and q < 550:
+        return "leccio"
+    if q < 320:
+        return "leccio" if float(lat or 42) < 42.3 else "quercia"
+    if q < 620:
+        if r in ("Campania", "Calabria", "Toscana"):
+            return "castagno"
+        return "quercia"
+    if q < 880:
+        if r in ("Campania", "Calabria", "Toscana", "Lazio"):
+            return "castagno"
+        return "misto_carpino_quercia"
+    if q < 1050:
+        return "faggio" if any(
+            k in n for k in (
+                "gran sasso", "majella", "matese", "sibillin", "terminillo",
+                "sirente", "velino", "parco", "fagget", "blockhaus", "laga",
+            )
+        ) else "castagno"
+    return "faggio"
+
+
+for _p in PUNTI:
+    _p["tipo"] = classifica_bosco(
+        _p.get("nome"), _p.get("quota"), _p.get("regione"), _p.get("lat"), _p.get("tipo")
+    )
+
+
+def punto_piu_vicino(lat, lon, max_km=6.0):
+    migliore = None
+    for z in PUNTI:
+        d = distanza_km(lat, lon, z["lat"], z["lon"])
+        if d <= max_km and (migliore is None or d < migliore[0]):
+            migliore = (d, z)
+    return None if migliore is None else migliore[1]
+
+
 # Stazioni ufficiali (WMO / Aeronautica / aeroporti) nelle 4 regioni e dintorni
 STAZIONI = [
     {"id": "16214", "nome": "L'Aquila Preturo", "lat": 42.38, "lon": 13.31},
@@ -3828,6 +3900,10 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
 
 
 def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+    p = dict(p)
+    p["tipo"] = classifica_bosco(
+        p.get("nome"), p.get("quota"), p.get("regione"), p.get("lat"), p.get("tipo")
+    )
     df, info_meteo, forecast, soil, vento = get_weather_data(
         p["lat"], p["lon"], days=30, mn_token=mn_token or "",
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
@@ -3836,6 +3912,49 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     )
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
+    # vento su tutte le fonti: se la stazione non ce l'ha, prendo il modello sul bosco
+    try:
+        manca_v = df is None or "vento_max" not in df.columns or pd.to_numeric(df["vento_max"], errors="coerce").fillna(0).max() <= 0
+        if manca_v or not vento or vento.get("nota_vento") == "Vento non disponibile":
+            _st, _fc, _so, vento_om = get_openmeteo_bundle(p["lat"], p["lon"], 30)
+            if vento_om and vento_om.get("vento_max_10g") not in (None, 0):
+                vento = vento_om
+            if df is not None and _st is not None and "vento_max" in _st.columns:
+                df = df.copy()
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                _st = _st.copy()
+                _st["date"] = pd.to_datetime(_st["date"], errors="coerce")
+                if "vento_max" not in df.columns:
+                    df = df.merge(_st[["date", "vento_max"]], on="date", how="left")
+                vento = riepilogo_vento(df)
+    except Exception:
+        pass
+    # stazione con mm assurdi rispetto alla mappa sul bosco → scartala
+    try:
+        mm_st = info_meteo.get("pioggia_stazione_30g")
+        mm_st = float(mm_st) if mm_st is not None else None
+        stima = bool(info_meteo.get("stima_mappa"))
+        if (not stima) and mm_st is not None and mm_st >= 70:
+            mappa = mn_pioggia_mappa(p["lat"], p["lon"], 15) or {}
+            mm_m = mappa.get("mese_mm")
+            if mm_m is not None and mm_st > (float(mm_m) * 2.2 + 25):
+                if mappa.get("df") is not None and len(mappa["df"]):
+                    df = mappa["df"]
+                    info_meteo["fonte"] = (
+                        f"Stazione scartata (mm incoerenti {mm_st:.0f} vs mappa {float(mm_m):.0f}) · "
+                        "Mappe giornaliere MN sul bosco"
+                    )
+                    info_meteo["stima_mappa"] = True
+                    info_meteo["pioggia_stazione_30g"] = float(mm_m)
+                    info_meteo["giorni_pluviometro"] = [
+                        f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                        for _, rr in mappa["df"].iterrows()
+                        if float(rr.get("precip") or 0) >= 0.2
+                    ]
+                    if "vento_max" in mappa["df"].columns:
+                        vento = riepilogo_vento(mappa["df"])
+    except Exception:
+        pass
     fonte0 = str(info_meteo.get("fonte") or "")
     if (
         fonte0.startswith("MeteoNetwork")

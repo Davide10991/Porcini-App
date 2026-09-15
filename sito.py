@@ -232,18 +232,34 @@ def api_punto():
         lon = float(body.get("lon"))
     except Exception:
         return jsonify({"ok": False, "errore": "coordinate"}), 400
-    tipo = (body.get("tipo") or "faggio").strip()
+    tipo = (body.get("tipo") or "").strip()
     try:
-        quota = int(body.get("quota") or 1000)
+        quota = int(body.get("quota") or 0)
     except Exception:
-        quota = 1000
+        quota = 0
+    vicino = engine.punto_piu_vicino(lat, lon, 6.0)
+    if vicino:
+        if not tipo or tipo == "faggio":
+            tipo = vicino.get("tipo") or tipo
+        if not quota:
+            quota = int(vicino.get("quota") or 0)
+        nome = body.get("nome") or vicino.get("nome")
+        regione = body.get("regione") or vicino.get("regione") or "Italia"
+    else:
+        nome = body.get("nome") or f"Punto {lat:.3f},{lon:.3f}"
+        regione = body.get("regione") or "Italia"
+        if not quota:
+            quota = 800
+        tipo = engine.classifica_bosco(nome, quota, regione, lat, tipo)
+    if not tipo:
+        tipo = engine.classifica_bosco(nome, quota, regione, lat, None)
     p = {
-        "nome": body.get("nome") or f"Punto {lat:.3f},{lon:.3f}",
+        "nome": nome,
         "lat": lat,
         "lon": lon,
         "tipo": tipo,
-        "quota": quota,
-        "regione": body.get("regione") or "Italia",
+        "quota": quota or 800,
+        "regione": regione,
     }
     regole = {
         "pioggia_min": int(body.get("pioggia_min") or 40),
