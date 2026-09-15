@@ -2550,6 +2550,73 @@ def wc_oggi(device_id):
 
 
 @st.cache_data(ttl=3600)
+WU_WEB_KEY = "53b89abc03d14d7ab89abc03d1dd7ab6"
+
+
+def wu_vicine(lat, lon):
+    try:
+        url = (
+            "https://api.weather.com/v3/location/near"
+            f"?geocode={lat:.4f},{lon:.4f}&product=pws&format=json&apiKey={WU_WEB_KEY}"
+        )
+        r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+        loc = (r.json() or {}).get("location") or {}
+        ids = loc.get("stationId") or []
+        out = []
+        for i, sid in enumerate(ids):
+            try:
+                out.append({
+                    "code": sid,
+                    "nome": (loc.get("stationName") or [sid])[i],
+                    "lat": float((loc.get("latitude") or [0])[i]),
+                    "lon": float((loc.get("longitude") or [0])[i]),
+                    "distanza_km": float((loc.get("distanceKm") or [99])[i]),
+                    "qc": (loc.get("qcStatus") or [0])[i],
+                })
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return []
+
+
+def wu_mese(station_id, days=30):
+    sid = str(station_id or "").strip()
+    if not sid:
+        return None
+    oggi = datetime.now().date()
+    start = (oggi - timedelta(days=days)).strftime("%Y%m%d")
+    end = oggi.strftime("%Y%m%d")
+    url = (
+        "https://api.weather.com/v2/pws/history/daily"
+        f"?stationId={sid}&format=json&units=m&startDate={start}&endDate={end}"
+        f"&apiKey={WU_WEB_KEY}&numericPrecision=decimal"
+    )
+    try:
+        r = requests.get(url, timeout=18, headers={"User-Agent": "Mozilla/5.0"})
+        obs = (r.json() or {}).get("observations") or []
+        recs = []
+        for o in obs:
+            try:
+                d = str(o.get("obsTimeLocal") or "")[:10]
+                m = o.get("metric") or {}
+                recs.append({
+                    "date": pd.Timestamp(d),
+                    "precip": float(m.get("precipTotal") or 0),
+                    "t_max": float(m.get("tempHigh") or 0),
+                    "t_min": float(m.get("tempLow") or 0),
+                    "t_mean": float(m.get("tempAvg") or 0),
+                    "vento_max": float(m.get("windgustHigh") or m.get("windspeedHigh") or 0),
+                })
+            except Exception:
+                continue
+        if not recs:
+            return None
+        return pd.DataFrame(recs).sort_values("date")
+    except Exception:
+        return None
+
+
 def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
     info = {
         "fonte": "ICON-2I 2km (modello sul bosco)",
@@ -2688,7 +2755,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return df_cf, info, forecast, soil, vento
 
     # MN e WC: entro 8 km se i dati sono pieni
-    RAGGIO_MN_BUONO = 8.0
+    RAGGIO_MN_BUONO = 5.0
 
     def _giorni_pieni(dfx):
         if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
@@ -2803,7 +2870,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             n_mn = _giorni_pieni(df_mn_peek)
     n_mn_rec = _giorni_recenti(df_mn_peek) if df_mn_peek is not None else 0
     mn_buchi = not _mn_viva(df_mn_peek) if df_mn_peek is not None else True
-    RAGGIO_WC = 8.0 if (mn_buchi or mn_min > RAGGIO_MN_BUONO) else 5.0
+    RAGGIO_WC = 8.0
     wc_piu_pioggia = False
     if usa_wc:
         try:
@@ -2856,13 +2923,52 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             forza_piedimonte = False
         else:
             forza_cusano = False
-    if usa_wc and (not ha_mn_vicina or forza_piedimonte or forza_cusano):
+    if usa_wc:
+        try:
+            cand_wu = [s for s in wu_vicine(lat, lon) if float(s.get("distanza_km") or 99) <= 5.0]
+            migliore_wu = None
+            for s in cand_wu[:4]:
+                dfw = wu_mese(s.get("code"), 30)
+                if dfw is None or len(dfw) < 8:
+                    continue
+                n_c = _giorni_pieni(dfw)
+                if n_c < 8:
+                    continue
+                mm_c = float(pd.to_numeric(dfw["precip"], errors="coerce").sum())
+                rank = (n_c, mm_c, -float(s.get("distanza_km") or 99))
+                if migliore_wu is None or rank > migliore_wu[0]:
+                    migliore_wu = (rank, s, dfw, mm_c)
+            if migliore_wu:
+                n_wu = migliore_wu[0][0]
+                mm_wu_r = migliore_wu[0][1]
+                dist_wu = -migliore_wu[0][2]
+                sc_wu = n_wu * 2 + (8 if n_wu >= 20 else 0)
+                sc_mn = n_mn * 2 + (8 if (not mn_buchi and n_mn >= 20) else 0)
+                if dist_wu <= 5.0 and (not ha_mn_vicina or sc_wu > sc_mn or (sc_wu == sc_mn and mm_wu_r > mm_mn)):
+                    s, df_wu, mm_wu = migliore_wu[1], migliore_wu[2], migliore_wu[3]
+                    giorni = []
+                    for _, row in df_wu.iterrows():
+                        try:
+                            if float(row.get("precip") or 0) >= 0.2:
+                                giorni.append(f"{pd.Timestamp(row['date']).date().isoformat()}: {float(row['precip']):.1f} mm")
+                        except Exception:
+                            continue
+                    info = {
+                        "fonte": f"Wunderground {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km",
+                        "stazione": f"{s.get('nome')} {s.get('code')}",
+                        "distanza_km": s.get("distanza_km"),
+                        "giorni_pluviometro": giorni,
+                        "pioggia_stazione_30g": round(mm_wu, 1),
+                    }
+                    return df_wu, info, forecast, soil, vento
+        except Exception:
+            pass
         cat = wc_catalogo()
-        raggio_vicino = 8.0 if (mn_buchi or not ha_mn_vicina) else 5.0
+        raggio_vicino = 5.0
         tutte_dist = []
         for staz in cat:
             dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-            if dkm <= float(max_km_stazione):
+            if dkm <= 5.0:
                 s2 = dict(staz)
                 s2["distanza_km"] = round(dkm, 1)
                 tutte_dist.append(s2)
