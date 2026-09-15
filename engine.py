@@ -1228,11 +1228,17 @@ def mn_stazioni_da_codici(token, codici):
 
 
 def punteggio_vicinanza(dist_km, d_quota, max_dist=45):
-    """Più basso è meglio. Penalizza stazioni lontane o a quota molto diversa."""
+    """Più basso è meglio. 0–2 km meglio di 2–5; quota simile conta."""
     if dist_km is None or dist_km > max_dist:
         return 9999
-    dq = abs(d_quota) if d_quota is not None else 300
-    return dist_km + dq / 80.0
+    dq = abs(d_quota) if d_quota is not None else 250
+    if dist_km <= 2.0:
+        base = dist_km
+    elif dist_km <= 5.0:
+        base = 4.0 + (dist_km - 2.0) * 2.5
+    else:
+        base = 20.0 + dist_km
+    return base + dq / 40.0
 
 
 def mn_stazioni_vicine(lat, lon, stazioni, quota=None, n=5, max_km=40):
@@ -2814,7 +2820,13 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             score += 10
         if online:
             score += 8
-        score -= float(dist) * 0.6
+        d = float(dist or 5)
+        if d <= 2.0:
+            score += 25
+        elif d <= 3.5:
+            score += 8
+        else:
+            score -= (d - 2.0) * 6.0
         return score
 
     def _mese_corrente_ok(dfx):
@@ -2928,22 +2940,27 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             migliore_wu = None
             for s in cand_wu[:4]:
                 dfw = wu_mese(s.get("code"), 30)
-                if dfw is None or len(dfw) < 8:
+                if dfw is None or len(dfw) < 12:
                     continue
                 n_c = _giorni_pieni(dfw)
-                if n_c < 8:
+                if n_c < 12 or not _mese_corrente_ok(dfw):
                     continue
                 mm_c = float(pd.to_numeric(dfw["precip"], errors="coerce").sum())
-                rank = (n_c, mm_c, -float(s.get("distanza_km") or 99))
+                d_wu = float(s.get("distanza_km") or 99)
+                fascia = 0 if d_wu <= 2.0 else 1
+                rank = (-fascia, n_c, -d_wu, mm_c)
                 if migliore_wu is None or rank > migliore_wu[0]:
                     migliore_wu = (rank, s, dfw, mm_c)
             if migliore_wu:
-                n_wu = migliore_wu[0][0]
-                mm_wu_r = migliore_wu[0][1]
+                fascia_wu = -migliore_wu[0][0]
+                n_wu = migliore_wu[0][1]
                 dist_wu = -migliore_wu[0][2]
-                sc_wu = n_wu * 2 + (8 if n_wu >= 20 else 0)
-                sc_mn = n_mn * 2 + (8 if (not mn_buchi and n_mn >= 20) else 0)
-                if dist_wu <= 5.0 and (not ha_mn_vicina or sc_wu > sc_mn or (sc_wu == sc_mn and mm_wu_r > mm_mn)):
+                mm_wu_r = migliore_wu[0][3]
+                sc_wu = _affidabilita(migliore_wu[2], online=True, dist=dist_wu)
+                sc_mn = _affidabilita(df_mn_peek, online=True, dist=mn_min)
+                wu_ok = n_wu >= 12 and _mese_corrente_ok(migliore_wu[2])
+                vicina_wu = wu_ok and dist_wu <= 2.0 and (mn_buchi or mn_min > 2.0)
+                if dist_wu <= 5.0 and wu_ok and (not ha_mn_vicina or vicina_wu or sc_wu > sc_mn):
                     s, df_wu, mm_wu = migliore_wu[1], migliore_wu[2], migliore_wu[3]
                     giorni = []
                     for _, row in df_wu.iterrows():
