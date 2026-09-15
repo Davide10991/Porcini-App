@@ -890,28 +890,85 @@ def _mn_png_xy(lat, lon, w=1026, h=1252):
     return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
 
 
+def _mn_e_mare_o_bordo(rgb):
+    r, g, b = rgb[:3]
+    if r < 28 and g < 28 and b < 28:
+        return True
+    if r > 245 and g > 245 and b > 245:
+        return True
+    # azzurro mare MN
+    if b >= 230 and g >= 190 and r <= 200:
+        return True
+    return False
+
+
+def _mn_e_terra_asciutta(rgb):
+    r, g, b = rgb[:3]
+    chroma = max(r, g, b) - min(r, g, b)
+    if chroma < 52:
+        return True
+    # beige rilievo senza pioggia
+    if r > 170 and g > 160 and b > 150 and abs(r - g) < 28 and b <= g + 8:
+        return True
+    return False
+
+
 def _mn_rgb_to_scala(rgb, palette, neutro=True):
     r, g, b = rgb[:3]
-    if neutro and abs(r - g) < 18 and abs(g - b) < 18:
+    if neutro and _mn_e_terra_asciutta(rgb):
         return None
     best, bd = None, 1e9
     for (pr, pg, pb), val in palette:
         d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
         if d < bd:
             bd, best = d, val
-    if bd > 12000:
+    if bd > 2800:
         return None
     return float(best)
 
 
 def _mn_rgb_to_mm(rgb):
-    r, g, b = rgb[:3]
-    if abs(r - g) < 18 and abs(g - b) < 18:
-        return 0.0
-    if b > 230 and r > 160 and g > 200 and r < 230:
+    if _mn_e_mare_o_bordo(rgb) or _mn_e_terra_asciutta(rgb):
         return 0.0
     v = _mn_rgb_to_scala(rgb, MN_PREC_PALETTE, neutro=False)
     return 0.0 if v is None else v
+
+
+def _mn_get_px(buf, w, h, x, y):
+    i = (y * w + x) * 3
+    return (buf[i], buf[i + 1], buf[i + 2])
+
+
+def _mn_sample(lat, lon, giorno, variabile, decoder):
+    pack = _mn_mappa_px(giorno, variabile)
+    if not pack:
+        return None
+    try:
+        w, h, buf = pack
+        x0, y0 = _mn_png_xy(lat, lon, w, h)
+        candidati = [(0, 0)]
+        for rad in range(1, 14):
+            for dx in range(-rad, rad + 1):
+                candidati.append((dx, -rad))
+                candidati.append((dx, rad))
+            for dy in range(-rad + 1, rad):
+                candidati.append((-rad, dy))
+                candidati.append((rad, dy))
+        # prima un pixel terra (non mare): se è beige = 0 mm
+        for dx, dy in candidati:
+            x = max(0, min(w - 1, x0 + dx))
+            y = max(0, min(h - 1, y0 + dy))
+            rgb = _mn_get_px(buf, w, h, x, y)
+            if _mn_e_mare_o_bordo(rgb):
+                continue
+            if variabile == "prec" and _mn_e_terra_asciutta(rgb):
+                return 0.0
+            v = decoder(rgb)
+            if v is not None:
+                return v
+        return 0.0 if variabile == "prec" else None
+    except Exception:
+        return None
 
 
 _MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
@@ -956,19 +1013,6 @@ def _mn_mappa_px(giorno, variabile="prec"):
         except Exception:
             pass
         return (im.size[0], im.size[1], buf)
-    except Exception:
-        return None
-
-
-def _mn_sample(lat, lon, giorno, variabile, decoder):
-    pack = _mn_mappa_px(giorno, variabile)
-    if not pack:
-        return None
-    try:
-        w, h, buf = pack
-        x, y = _mn_png_xy(lat, lon, w, h)
-        i = (y * w + x) * 3
-        return decoder((buf[i], buf[i + 1], buf[i + 2]))
     except Exception:
         return None
 
@@ -1061,6 +1105,19 @@ def mn_pioggia_mappa(lat, lon, raggio=15):
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
+    try:
+        vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
+        if len(vals) >= 8:
+            vc = vals.value_counts()
+            top, ntop = float(vc.index[0]), int(vc.iloc[0])
+            # stesso mm tutti i giorni = pixel sbagliato (mare/legenda)
+            if top > 0 and ntop / len(vals) >= 0.55:
+                return None
+            tot_chk = float(vals.sum())
+            if tot_chk > 280 and vals.nunique() <= 4:
+                return None
+    except Exception:
+        pass
     tot = round(float(df["precip"].sum()), 1)
     oggi_ts = pd.Timestamp(oggi)
     oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0]) if (df["date"] == oggi_ts).any() else 0.0
@@ -3571,10 +3628,55 @@ def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
     return out
 
 
-def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
-    """Buttata secondo FunghiMagazine: nasce 12-15 gg dopo pioggia importante,
-    dura in media 15 gg, 15-20 se condizioni buone, fino a ~30 se ideali
-    (poco vento, temp non estreme, tanta acqua prima)."""
+def _soglia_spugnata(t_max_media=20.0, siccita=False):
+    """Più caldo e più siccità prima, più mm servono. Base ~40 mm."""
+    t = float(t_max_media or 20)
+    soglia = 40.0
+    if t >= 28:
+        soglia = 58.0
+    elif t >= 25:
+        soglia = 50.0
+    elif t >= 22:
+        soglia = 44.0
+    elif t <= 16:
+        soglia = 34.0
+    if siccita:
+        soglia += 10.0
+    return soglia
+
+
+def _mm_efficaci(mm):
+    """Pioggia moderata penetra; i diluvi scivolano."""
+    mm = float(mm or 0)
+    if mm <= 0:
+        return 0.0
+    if 3 <= mm <= 18:
+        return mm
+    if mm > 18:
+        return 18.0 + (mm - 18.0) * 0.45
+    return mm * 0.8
+
+
+def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
+    """Faggio ~14 gg, castagno ~12, quercia ~10. Il caldo accorcia un filo."""
+    t = tipo_bosco or "faggio"
+    if t in ("faggio", "abete_bianco", "abete_rosso"):
+        g = 14
+    elif t == "castagno":
+        g = 12
+    else:
+        g = 10
+    tm = float(t_max_media or 20)
+    if tm >= 26:
+        g = max(8, g - 2)
+    elif tm <= 16:
+        g += 2
+    return g
+
+
+def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco="faggio", quota=1000, soil=None):
+    """Spugnata ~40 mm (più se caldo/siccità), meglio distribuita.
+    Nascite dopo 14/12/10 gg. Durata media 2 settimane, non un mese."""
     if df is None or len(df) == 0 or "precip" not in df.columns:
         return []
     d = df.copy()
@@ -3583,72 +3685,100 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
     d = d.sort_values("date")
     eventi = []
     acc = 0.0
+    acc_eff = 0.0
+    n_gg = 0
     start = None
     last = None
+    giorni_cluster = []
     for _, row in d.iterrows():
         mm = float(row["precip"])
         giorno = row["date"]
-        if mm >= 2:
+        if mm >= 1.5:
             if start is None:
                 start = giorno
                 acc = mm
-            elif last is not None and (giorno - last).days <= 3:
+                acc_eff = _mm_efficaci(mm)
+                n_gg = 1
+                giorni_cluster = [mm]
+            elif last is not None and (giorno - last).days <= 4:
                 acc += mm
+                acc_eff += _mm_efficaci(mm)
+                n_gg += 1
+                giorni_cluster.append(mm)
             else:
-                if acc >= 20:
-                    eventi.append((last or start, acc))
+                eventi.append((last or start, acc, acc_eff, n_gg, start))
                 start = giorno
                 acc = mm
+                acc_eff = _mm_efficaci(mm)
+                n_gg = 1
+                giorni_cluster = [mm]
             last = giorno
-        elif start is not None and last is not None and (giorno - last).days > 3:
-            if acc >= 20:
-                eventi.append((last, acc))
-            start, acc, last = None, 0.0, None
-    if start is not None and acc >= 20:
-        eventi.append((last or start, acc))
+        elif start is not None and last is not None and (giorno - last).days > 4:
+            eventi.append((last, acc, acc_eff, n_gg, start))
+            start, acc, acc_eff, n_gg, last = None, 0.0, 0.0, 0, None
+            giorni_cluster = []
+    if start is not None:
+        eventi.append((last or start, acc, acc_eff, n_gg, start))
 
     oggi = pd.Timestamp(datetime.now().date())
-    # caldo torrido + vento: FM dice che inibiscono o chiudono la buttata
-    if t_max_media >= 30:
-        dur_clima = 0.55
-    elif t_max_media >= 27:
-        dur_clima = 0.72
-    elif 16 <= t_max_media <= 26:
-        dur_clima = 1.0
-    else:
-        dur_clima = 0.9
-    if fattore_v < 0.4:
-        dur_clima *= 0.55
-    elif fattore_v < 0.7:
-        dur_clima *= 0.75
     out = []
-    for data_evt, mm in eventi:
-        # base 15 gg; 20 se tanta acqua; fino a 30 se spugnata abbondante e clima ok
-        if mm >= 60 and dur_clima >= 0.95:
-            durata = 28
-        elif mm >= 40 and dur_clima >= 0.85:
-            durata = 20
-        else:
+    for data_evt, mm, mm_eff, n_gg, data_start in eventi:
+        prec_prima = d[(d["date"] < pd.Timestamp(data_start)) & (d["date"] >= pd.Timestamp(data_start) - pd.Timedelta(days=12))]
+        siccita = True
+        if len(prec_prima):
+            siccita = float(prec_prima["precip"].sum()) < 8
+        soglia = _soglia_spugnata(t_max_media, siccita)
+        if mm_eff < soglia and mm < soglia:
+            continue
+        # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
+        durata = 14
+        if mm_eff >= 70 and n_gg >= 4:
+            durata = 17
+        elif mm_eff >= 50 and n_gg >= 3:
             durata = 15
-        durata = max(7, round(durata * dur_clima))
-        inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=giorni_attesa)
+        elif mm_eff < soglia + 5:
+            durata = 12
+        if tipo_bosco in ("faggio", "abete_bianco", "abete_rosso"):
+            durata += 1
+        if quota and quota >= 1200:
+            durata += 1
+        if t_max_media >= 27:
+            durata = round(durata * 0.72)
+        elif t_max_media >= 24:
+            durata = round(durata * 0.88)
+        if fattore_v < 0.45:
+            durata = round(durata * 0.65)
+        elif fattore_v < 0.7:
+            durata = round(durata * 0.82)
+        if soil is not None:
+            try:
+                s = float(soil)
+                if s < 0.18:
+                    durata = round(durata * 0.75)
+                elif 0.22 <= s <= 0.38:
+                    durata = min(18, durata + 1)
+            except Exception:
+                pass
+        durata = int(max(8, min(18, durata)))
+        attesa = int(giorni_attesa)
+        inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
-        # senza pioggia recente il terreno si asciuga: buttata chiusa
         dopo = d[d["date"] >= pd.Timestamp(data_evt)]
         ultima_umida = None
         if len(dopo):
-            umide = dopo[dopo["precip"] >= 5]
+            umide = dopo[dopo["precip"] >= 4]
             if len(umide):
                 ultima_umida = pd.to_datetime(umide["date"].max()).normalize()
-        if ultima_umida is not None:
-            asciutto = int((oggi - ultima_umida).days)
-            if asciutto >= 10:
-                fine = min(fine, ultima_umida + pd.Timedelta(days=10))
+        if ultima_umida is not None and int((oggi - ultima_umida).days) >= 12:
+            fine = min(fine, ultima_umida + pd.Timedelta(days=12))
         attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
-        if ultima_umida is not None and (oggi - ultima_umida).days >= 10:
+        if ultima_umida is not None and (oggi - ultima_umida).days >= 12:
             attiva = False
         out.append({
             "pioggia_mm": round(float(mm), 1),
+            "pioggia_efficace": round(float(mm_eff), 1),
+            "giorni_pioggia": int(n_gg),
+            "soglia_mm": round(soglia, 0),
             "data_pioggia": pd.Timestamp(data_evt).date().isoformat(),
             "inizio": inizio.date().isoformat(),
             "fine": fine.date().isoformat(),
@@ -3667,8 +3797,8 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
     vuoto = {
         "fase": "SERVE ACQUA",
         "testo": (
-            f"Buttata non partita. Servono almeno 20–30 mm ravvicinati, "
-            f"poi {giorni_attesa} giorni di attesa prima delle nascite."
+            f"Buttata non partita. Servono circa 40 mm (di più se fa caldo o c'era siccità), "
+            f"meglio in più giorni moderati, poi {giorni_attesa} giorni di attesa."
         ),
     }
     if not buttate:
@@ -3677,8 +3807,8 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "ACQUA DEBOLE",
             "testo": (
-                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma non una spugnata unica da 20+ mm. "
-                "Serve altra acqua per far partire una buttata."
+                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma non una spugnata da ~40 mm "
+                "distribuita. Serve altra acqua per far partire una buttata."
             ),
         }
     attive = [b for b in buttate if b.get("attiva")]
@@ -3861,6 +3991,9 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
 
     if precip_10g >= 15:
         score_pioggia = min(65, score_pioggia + 5)
+    # meglio acqua distribuita (penetra) che un temporale solo
+    if 4 <= giorni_con_pioggia <= 12 and precip_totale >= 35:
+        score_pioggia = min(70, score_pioggia + 6)
 
     score_temp = 0
     if t_max_ok[0] <= t_max_media <= t_max_ok[1]:
@@ -3877,23 +4010,16 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     else:
         score_temp += 3
 
-    # FM: estivi 12-15 gg dopo l'ultima pioggia importante;
-    # in faggeta (più fresca, pinophilus/edulis) un filo più lunga
+    # attesa: faggio 14, castagno 12, quercia 10 — il caldo accorcia un filo
     specie = specie_porcini(tipo_bosco, quota, t_max_media)
-    top_sp = next((s for s in specie if s["stato"] != "fuori stagione"), specie[0] if specie else None)
-    # FM: estatino/aereus più rapidi dopo i tepori; edulis/pinicola dopo piogge fresche
-    if top_sp and top_sp["id"] in ("estatino", "aereus"):
-        giorni_attesa = 12
-    elif tipo_bosco in ("faggio", "abete_bianco", "abete_rosso"):
-        giorni_attesa = 15
-    elif tipo_bosco == "castagno":
-        giorni_attesa = 13
-    else:
-        giorni_attesa = 12
+    giorni_attesa = giorni_attesa_bosco(tipo_bosco, t_max_media)
 
     vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
     fattore_v = float(vento.get("fattore_vento") or 1.0)
-    buttate = trova_buttate(df, giorni_attesa, t_max_media, fattore_v)
+    buttate = trova_buttate(
+        df, giorni_attesa, t_max_media, fattore_v,
+        tipo_bosco=tipo_bosco, quota=quota, soil=soil,
+    )
     attive = [b for b in buttate if b.get("attiva")]
     giorni_dalla_pioggia = 99
     if buttate:
