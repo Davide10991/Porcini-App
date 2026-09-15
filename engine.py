@@ -2549,7 +2549,6 @@ def wc_oggi(device_id):
         return None
 
 
-@st.cache_data(ttl=3600)
 WU_WEB_KEY = "53b89abc03d14d7ab89abc03d1dd7ab6"
 
 
