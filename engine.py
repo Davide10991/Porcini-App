@@ -2675,21 +2675,41 @@ def wu_mese(station_id, days=30):
         recs = []
         for o in obs:
             try:
-                d = str(o.get("obsTimeLocal") or "")[:10]
+                d = str(o.get("obsTimeLocal") or o.get("obsTimeUtc") or "")[:10]
                 m = o.get("metric") or {}
+                v = (
+                    m.get("windgustHigh")
+                    or m.get("windspeedHigh")
+                    or o.get("windgustHigh")
+                    or o.get("windspeedHigh")
+                    or 0
+                )
+                try:
+                    v = float(v or 0)
+                except Exception:
+                    v = 0.0
                 recs.append({
                     "date": pd.Timestamp(d),
-                    "precip": float(m.get("precipTotal") or 0),
+                    "precip": float(m.get("precipTotal") or m.get("precipRate") or 0),
                     "t_max": float(m.get("tempHigh") or 0),
                     "t_min": float(m.get("tempLow") or 0),
                     "t_mean": float(m.get("tempAvg") or 0),
-                    "vento_max": float(m.get("windgustHigh") or m.get("windspeedHigh") or 0),
+                    "vento_max": v,
                 })
             except Exception:
                 continue
         if not recs:
             return None
-        return pd.DataFrame(recs).sort_values("date")
+        dfw = pd.DataFrame(recs).sort_values("date")
+        try:
+            vv = pd.to_numeric(dfw["vento_max"], errors="coerce").fillna(0)
+            nz = vv[vv > 0]
+            # WU a volte dà m/s: se la mediana è bassa, porto in km/h
+            if len(nz) and float(nz.median()) <= 12:
+                dfw["vento_max"] = (vv * 3.6).round(1)
+        except Exception:
+            pass
+        return dfw
     except Exception:
         return None
 
@@ -3633,9 +3653,128 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0):
             "inizio": inizio.date().isoformat(),
             "fine": fine.date().isoformat(),
             "attiva": attiva,
+            "in_attesa": bool(inizio.normalize() > oggi),
+            "giorni_alla_nascita": int((inizio.normalize() - oggi).days) if inizio.normalize() > oggi else 0,
+            "giorni_dal_inizio": int((oggi - inizio.normalize()).days) + 1 if attiva else 0,
             "giorni_alla_fine": int((fine.normalize() - oggi).days) if attiva else None,
         })
     return out
+
+
+def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
+    """Fase chiara: in attesa / in corso / finita / serve acqua."""
+    oggi = pd.Timestamp(datetime.now().date())
+    vuoto = {
+        "fase": "SERVE ACQUA",
+        "testo": (
+            f"Buttata non partita. Servono almeno 20–30 mm ravvicinati, "
+            f"poi {giorni_attesa} giorni di attesa prima delle nascite."
+        ),
+    }
+    if not buttate:
+        if float(precip_totale or 0) < 20:
+            return vuoto
+        return {
+            "fase": "ACQUA DEBOLE",
+            "testo": (
+                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma non una spugnata unica da 20+ mm. "
+                "Serve altra acqua per far partire una buttata."
+            ),
+        }
+    attive = [b for b in buttate if b.get("attiva")]
+    future = [b for b in buttate if b.get("in_attesa") or pd.to_datetime(b["inizio"]) > oggi]
+    if attive:
+        b = attive[-1]
+        restano = b.get("giorni_alla_fine")
+        giorno = b.get("giorni_dal_inizio") or 1
+        extra = ""
+        if len(attive) >= 2:
+            extra = " Buttate incrociate (una nuova sopra la vecchia)."
+        return {
+            "fase": "IN CORSO",
+            "testo": (
+                f"Buttata INIZIATA il {b['inizio']} — oggi è il giorno {giorno}. "
+                f"Resta aperta fino al {b['fine']}"
+                + (f" ({restano} giorni)" if restano is not None else "")
+                + f". Innescata da {b['pioggia_mm']} mm il {b['data_pioggia']}."
+                + extra
+            ),
+        }
+    if future:
+        b = future[0]
+        manca = b.get("giorni_alla_nascita")
+        if manca is None:
+            manca = int((pd.to_datetime(b["inizio"]) - oggi).days)
+        return {
+            "fase": "IN ATTESA",
+            "testo": (
+                f"La buttata NON è ancora nata. Pioggia buona {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                f"Attendi ancora {manca} giorni — nascite previste dal {b['inizio']} al {b['fine']}."
+            ),
+        }
+    b = buttate[-1]
+    return {
+        "fase": "FINITA",
+        "testo": (
+            f"Buttata FINITA il {b['fine']} (era partita il {b['inizio']} "
+            f"dopo {b['pioggia_mm']} mm il {b['data_pioggia']}). "
+            "Serve una nuova spugnata per farne riniziare un'altra."
+        ),
+    }
+
+
+def _completa_vento(df, lat, lon, vento=None):
+    """Vento da stazione (WU/MN); se manca, mappe MN; ultimo il modello."""
+    def _ok(v):
+        return v and v.get("vento_max_10g") not in (None, 0) and v.get("nota_vento") != "Vento non disponibile"
+
+    if df is not None and "vento_max" in getattr(df, "columns", []):
+        try:
+            vv = pd.to_numeric(df["vento_max"], errors="coerce").fillna(0)
+            if float(vv.max()) > 0:
+                v0 = riepilogo_vento(df)
+                if _ok(v0):
+                    return df, v0
+        except Exception:
+            pass
+    # mappe MN vento sul bosco
+    try:
+        mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+        mdf = mappa.get("df")
+        if mdf is not None and "vento_max" in mdf.columns:
+            if df is None or len(df) == 0:
+                df = mdf
+            else:
+                df = df.copy()
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                m2 = mdf.copy()
+                m2["date"] = pd.to_datetime(m2["date"], errors="coerce")
+                if "vento_max" in df.columns:
+                    df = df.drop(columns=["vento_max"])
+                df = df.merge(m2[["date", "vento_max"]], on="date", how="left")
+            v0 = riepilogo_vento(df)
+            if _ok(v0):
+                return df, v0
+    except Exception:
+        pass
+    try:
+        _st, _fc, _so, vento_om = get_openmeteo_bundle(lat, lon, 30)
+        if df is not None and _st is not None and "vento_max" in _st.columns:
+            df = df.copy()
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            _st = _st.copy()
+            _st["date"] = pd.to_datetime(_st["date"], errors="coerce")
+            if "vento_max" in df.columns:
+                df = df.drop(columns=["vento_max"])
+            df = df.merge(_st[["date", "vento_max"]], on="date", how="left")
+            v0 = riepilogo_vento(df)
+            if _ok(v0):
+                return df, v0
+        if _ok(vento_om):
+            return df, vento_om
+    except Exception:
+        pass
+    return df, vento or riepilogo_vento(df if df is not None and "vento_max" in getattr(df, "columns", []) else None)
 
 
 def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
@@ -3802,6 +3941,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         consiglio = f"Specie: {txt_sp} · " + consiglio
     if fattore_v < 0.5:
         consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
+    sb = stato_buttata(buttate, precip_totale, giorni_attesa)
 
     dettaglio = {
         "precip_totale_30g": round(precip_totale, 1),
@@ -3826,6 +3966,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "picco_max_kmh": vento.get("picco_max_kmh"),
         "buttate": buttate,
         "buttate_attive": len(attive),
+        "stato_buttata": sb["fase"],
+        "stato_buttata_testo": sb["testo"],
         "specie": specie,
         "specie_testo": ", ".join(
             f"{s['nome']} ({s['stato']})" for s in specie if s["stato"] != "fuori stagione"
@@ -3912,23 +4054,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     )
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
-    # vento su tutte le fonti: se la stazione non ce l'ha, prendo il modello sul bosco
-    try:
-        manca_v = df is None or "vento_max" not in df.columns or pd.to_numeric(df["vento_max"], errors="coerce").fillna(0).max() <= 0
-        if manca_v or not vento or vento.get("nota_vento") == "Vento non disponibile":
-            _st, _fc, _so, vento_om = get_openmeteo_bundle(p["lat"], p["lon"], 30)
-            if vento_om and vento_om.get("vento_max_10g") not in (None, 0):
-                vento = vento_om
-            if df is not None and _st is not None and "vento_max" in _st.columns:
-                df = df.copy()
-                df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                _st = _st.copy()
-                _st["date"] = pd.to_datetime(_st["date"], errors="coerce")
-                if "vento_max" not in df.columns:
-                    df = df.merge(_st[["date", "vento_max"]], on="date", how="left")
-                vento = riepilogo_vento(df)
-    except Exception:
-        pass
+    df, vento = _completa_vento(df, p["lat"], p["lon"], vento)
     # stazione con mm assurdi rispetto alla mappa sul bosco → scartala
     try:
         mm_st = info_meteo.get("pioggia_stazione_30g")
