@@ -2714,6 +2714,23 @@ def wu_vicine(lat, lon):
         return []
 
 
+def _wu_precip(metric, obs=None):
+    """precipTotal 0.0 è un valore vero: non usare `or` che lo butta via."""
+    m = metric or {}
+    if m.get("precipTotal") is not None:
+        try:
+            return max(0.0, float(m.get("precipTotal")))
+        except Exception:
+            pass
+    imp = (obs or {}).get("imperial") or {}
+    if imp.get("precipTotal") not in (None, 0, 0.0):
+        try:
+            return max(0.0, float(imp.get("precipTotal")) * 25.4)
+        except Exception:
+            pass
+    return 0.0
+
+
 def wu_mese(station_id, days=30):
     sid = str(station_id or "").strip()
     if not sid:
@@ -2747,7 +2764,7 @@ def wu_mese(station_id, days=30):
                     v = 0.0
                 recs.append({
                     "date": pd.Timestamp(d),
-                    "precip": float(m.get("precipTotal") or m.get("precipRate") or 0),
+                    "precip": _wu_precip(m, o),
                     "t_max": float(m.get("tempHigh") or 0),
                     "t_min": float(m.get("tempLow") or 0),
                     "t_mean": float(m.get("tempAvg") or 0),
@@ -2769,6 +2786,53 @@ def wu_mese(station_id, days=30):
         return dfw
     except Exception:
         return None
+
+
+def _pluvio_morto(df):
+    """Pluviometro spento o assente: quasi solo zeri."""
+    if df is None or "precip" not in getattr(df, "columns", []) or len(df) < 8:
+        return True
+    p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+    umidi = int((p >= 0.4).sum())
+    tot = float(p.sum())
+    # 30 giorni a 0/tracce = niente secchio, non "non ha piovuto"
+    if tot < 5.0 and umidi < 2:
+        return True
+    if umidi == 0:
+        return True
+    return False
+
+
+def _mappa_smentisce_stazione(df, lat, lon):
+    """Se la stazione ha giorni umidi che sulla mappa MN sul bosco non ci sono, è da scartare."""
+    if df is None or "precip" not in getattr(df, "columns", []):
+        return None
+    mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+    mdf = mappa.get("df")
+    mm_m = mappa.get("mese_mm")
+    if mdf is None or mm_m is None:
+        return None
+    st = df.copy()
+    st["date"] = pd.to_datetime(st["date"], errors="coerce").dt.normalize()
+    mp = mdf.copy()
+    mp["date"] = pd.to_datetime(mp["date"], errors="coerce").dt.normalize()
+    j = st.merge(mp[["date", "precip"]].rename(columns={"precip": "mm_mappa"}), on="date", how="left")
+    j["precip"] = pd.to_numeric(j["precip"], errors="coerce").fillna(0)
+    j["mm_mappa"] = pd.to_numeric(j["mm_mappa"], errors="coerce").fillna(0)
+    umidi = j[j["precip"] >= 4]
+    if len(umidi) == 0:
+        return None
+    ghost = umidi[umidi["mm_mappa"] <= 1.0]
+    ghost_mm = float(ghost["precip"].sum()) if len(ghost) else 0.0
+    mm_st = float(j["precip"].sum())
+    smentita = False
+    if len(ghost) >= 3 or (len(ghost) >= 2 and ghost_mm >= 16):
+        smentita = True
+    if mm_st >= 22 and float(mm_m) < max(10.0, mm_st * 0.30):
+        smentita = True
+    if not smentita:
+        return None
+    return mappa
 
 
 def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
@@ -3087,9 +3151,11 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         try:
             cand_wu = [s for s in wu_vicine(lat, lon) if float(s.get("distanza_km") or 99) <= 5.0]
             migliore_wu = None
-            for s in cand_wu[:4]:
+            for s in cand_wu[:8]:
                 dfw = wu_mese(s.get("code"), 30)
                 if dfw is None or len(dfw) < 12:
+                    continue
+                if _pluvio_morto(dfw):
                     continue
                 n_c = _giorni_pieni(dfw)
                 if n_c < 12 or not _mese_corrente_ok(dfw):
@@ -4229,30 +4295,75 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
     df, vento = _completa_vento(df, p["lat"], p["lon"], vento)
-    # stazione con mm assurdi rispetto alla mappa sul bosco → scartala
+    # stazione con vento/temp ma pluviometro spento (es. WU IFERRIER5 = 0 mm per 30g)
     try:
-        mm_st = info_meteo.get("pioggia_stazione_30g")
-        mm_st = float(mm_st) if mm_st is not None else None
-        stima = bool(info_meteo.get("stima_mappa"))
-        if (not stima) and mm_st is not None and mm_st >= 70:
+        mm_now = 0.0
+        if df is not None and "precip" in df.columns:
+            mm_now = float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum())
+        if (not info_meteo.get("stima_mappa")) and (df is None or _pluvio_morto(df) or mm_now < 5):
             mappa = mn_pioggia_mappa(p["lat"], p["lon"], 15) or {}
-            mm_m = mappa.get("mese_mm")
-            if mm_m is not None and mm_st > (float(mm_m) * 2.2 + 25):
-                if mappa.get("df") is not None and len(mappa["df"]):
-                    df = mappa["df"]
-                    info_meteo["fonte"] = (
-                        f"Stazione scartata (mm incoerenti {mm_st:.0f} vs mappa {float(mm_m):.0f}) · "
-                        "Mappe giornaliere MN sul bosco"
-                    )
-                    info_meteo["stima_mappa"] = True
-                    info_meteo["pioggia_stazione_30g"] = float(mm_m)
-                    info_meteo["giorni_pluviometro"] = [
-                        f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                        for _, rr in mappa["df"].iterrows()
-                        if float(rr.get("precip") or 0) >= 0.2
-                    ]
-                    if "vento_max" in mappa["df"].columns:
-                        vento = riepilogo_vento(mappa["df"])
+            mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
+            if mappa and mappa.get("df") is not None and len(mappa["df"]) and mm_m >= 8:
+                keep = df.copy() if df is not None else None
+                df = mappa["df"].copy()
+                if keep is not None:
+                    try:
+                        keep["date"] = pd.to_datetime(keep["date"], errors="coerce")
+                        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                        cols = [c for c in ("t_max", "t_min", "t_mean", "t_med", "vento_max") if c in keep.columns]
+                        if cols:
+                            if "vento_max" in df.columns:
+                                df = df.drop(columns=["vento_max"])
+                            df = df.merge(keep[["date"] + cols], on="date", how="left")
+                    except Exception:
+                        pass
+                stn = info_meteo.get("stazione") or "stazione"
+                info_meteo["fonte"] = (
+                    f"Pluviometro assente/a 0 mm ({stn}) · pioggia mappe MN {mm_m:.0f} mm"
+                )
+                info_meteo["stima_mappa"] = True
+                info_meteo["pioggia_stazione_30g"] = mm_m
+                info_meteo["giorni_pluviometro"] = [
+                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                    for _, rr in mappa["df"].iterrows()
+                    if float(rr.get("precip") or 0) >= 0.2
+                ]
+                if "vento_max" in df.columns:
+                    vento = riepilogo_vento(df)
+    except Exception:
+        pass
+    # stazione vs mappa MN sul bosco: se i mm della stazione non ci sono in mappa, uso la mappa
+    try:
+        if df is not None and not info_meteo.get("stima_mappa"):
+            mappa = _mappa_smentisce_stazione(df, p["lat"], p["lon"])
+            if mappa and mappa.get("df") is not None and len(mappa["df"]):
+                mm_st = float(pd.to_numeric(df["precip"], errors="coerce").sum()) if "precip" in df.columns else 0
+                mm_m = float(mappa.get("mese_mm") or 0)
+                keep_t = df.copy()
+                df = mappa["df"].copy()
+                try:
+                    keep_t["date"] = pd.to_datetime(keep_t["date"], errors="coerce")
+                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                    cols = [c for c in ("t_max", "t_min", "t_mean", "t_med", "vento_max") if c in keep_t.columns]
+                    if cols:
+                        if "vento_max" in df.columns:
+                            df = df.drop(columns=["vento_max"])
+                        df = df.merge(keep_t[["date"] + cols], on="date", how="left")
+                except Exception:
+                    pass
+                info_meteo["fonte"] = (
+                    f"Pluviometro smentito dalle mappe MN ({mm_st:.0f} mm stazione vs {mm_m:.0f} mm sul bosco) · "
+                    "Mappe giornaliere MN"
+                )
+                info_meteo["stima_mappa"] = True
+                info_meteo["pioggia_stazione_30g"] = mm_m
+                info_meteo["giorni_pluviometro"] = [
+                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+                    for _, rr in mappa["df"].iterrows()
+                    if float(rr.get("precip") or 0) >= 0.2
+                ]
+                if "vento_max" in df.columns:
+                    vento = riepilogo_vento(df)
     except Exception:
         pass
     fonte0 = str(info_meteo.get("fonte") or "")
