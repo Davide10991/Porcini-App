@@ -1082,6 +1082,79 @@ def dpc_pioggia_punto(lat, lon):
     return {"mm_24h": mm, "ts": ts, "fonte": "DPC CUM24 / SRT24"}
 
 
+@lru_cache(maxsize=20000)
+def _dpc_giorno_mm(lat_r, lon_r, giorno_iso, ora_utc):
+    """Valore CUM24 (radar tarato sui pluviometri, dato reale non modellato) per un punto/giorno.
+    Cache per (lat arrotondata, lon arrotondata, giorno, ora): la cella radar è ~1km,
+    quindi punti vicini nello stesso giorno riusano la stessa chiamata."""
+    headers = {
+        "Origin": "https://radar.protezionecivile.it",
+        "Referer": "https://radar.protezionecivile.it/",
+        "User-Agent": "Mozilla/5.0",
+    }
+    pad = 0.045
+    time_param = f"{giorno_iso}T{ora_utc}.000Z"
+    url = (
+        "https://radar-geowebcache.protezionecivile.it/service/wms"
+        "?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetFeatureInfo"
+        "&LAYERS=radar:cum24&QUERY_LAYERS=radar:cum24"
+        "&INFO_FORMAT=application/json&SRS=EPSG:4326"
+        f"&BBOX={lon_r - pad},{lat_r - pad},{lon_r + pad},{lat_r + pad}"
+        "&WIDTH=11&HEIGHT=11&X=5&Y=5"
+        f"&TIME={time_param}"
+    )
+    try:
+        r = requests.get(url, headers=headers, timeout=12)
+        if r.status_code != 200 or not r.content:
+            return None
+        data = r.json()
+        feats = data.get("features") or []
+        if not feats:
+            return None
+        props = feats[0].get("properties") or {}
+        for v in props.values():
+            try:
+                return float(v)
+            except Exception:
+                continue
+    except Exception:
+        return None
+    return None
+
+
+def dpc_serie_giorni(lat, lon, giorni=30, max_workers=5):
+    """Serie storica di pioggia REALE (radar Protezione Civile tarato sui pluviometri,
+    prodotto CUM24) per un punto, ultimi N giorni. Copertura nazionale (Sicilia/Calabria
+    incluse), a differenza dei modelli meteo che a Sud/sulle isole degradano o non arrivano.
+    Ritorna None se la copertura radar sul punto non è buona (troppi buchi o pixel piatto,
+    es. fuori portata/mare/margine)."""
+    lat_r, lon_r = round(float(lat), 2), round(float(lon), 2)
+    oggi = datetime.now(TZ_ROMA).date()
+
+    def _uno(i):
+        g = oggi - timedelta(days=i)
+        iso = g.isoformat()
+        mm = _dpc_giorno_mm(lat_r, lon_r, iso, "06:00:00")
+        if mm is None:
+            mm = _dpc_giorno_mm(lat_r, lon_r, iso, "00:00:00")
+        return g, mm
+
+    rows = []
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        for g, mm in ex.map(_uno, range(int(giorni))):
+            if mm is not None:
+                rows.append({"date": pd.Timestamp(g), "precip": round(max(float(mm), 0.0), 1)})
+    if len(rows) < max(15, int(giorni * 0.5)):
+        return None
+    df = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+    vals = df["precip"].round(1)
+    vc = vals.value_counts()
+    # stesso mm quasi tutti i giorni = cella radar non valida (mare/bordo/buco copertura)
+    if len(vc) and (vc.iloc[0] / len(vals)) >= 0.7:
+        return None
+    return df
+
+
 def mn_pioggia_mappa(lat, lon, raggio=15):
     """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
     oggi = datetime.now().date()
@@ -1649,6 +1722,19 @@ def mn_dati_stazione(token, code, days=30):
     return None
 
 
+def _stazione_attiva(daily_end, max_giorni_fermo=120):
+    """Una stazione Meteostat senza dati recenti (daily_end vecchio) non va scelta
+    come 'più vicina': darebbe un archivio vuoto e forzerebbe comunque il fallback."""
+    de = str(daily_end or "").strip()
+    if not de:
+        return True  # nessuna data di fine indicata: la si considera attiva
+    try:
+        d = datetime.fromisoformat(de[:10]).date()
+    except Exception:
+        return True
+    return (datetime.now().date() - d).days <= max_giorni_fermo
+
+
 @st.cache_data(ttl=86400)
 def catalogo_stazioni_ufficiali():
     """Stazioni Meteostat del Centro-Sud + elenco hardcoded (WMO/aeroporti)."""
@@ -1662,6 +1748,8 @@ def catalogo_stazioni_ufficiali():
                 if not sid:
                     continue
                 seen.add(sid)
+                if not _stazione_attiva(s.get("daily_end")):
+                    continue
                 out.append({
                     "id": sid,
                     "nome": s.get("nome") or sid,
@@ -2971,6 +3059,31 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         }
         if df_cf is not None and len(df_cf):
             return df_cf, info, forecast, soil, vento
+
+    # Radar-DPC (CUM24): pioggia REALE radar + pluviometri, copertura nazionale.
+    # Priorità sopra le stazioni scraped: qui il dato è misurato sul punto esatto,
+    # non ricostruito da una stazione a km di distanza o da un modello meteo.
+    try:
+        df_dpc = dpc_serie_giorni(lat, lon, 30)
+    except Exception:
+        df_dpc = None
+    if df_dpc is not None and len(df_dpc) >= 20:
+        tot_dpc = round(float(df_dpc["precip"].sum()), 1)
+        giorni_dpc = [
+            f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
+            for _, rr in df_dpc.iterrows()
+            if float(rr.get("precip") or 0) >= 0.2
+        ]
+        info = {
+            "fonte": f"Radar-DPC CUM24 (radar + pluviometri, dato reale) · {len(df_dpc)}/30 giorni",
+            "stazione": "Rete radar nazionale Protezione Civile",
+            "distanza_km": 0,
+            "quota_stazione": None,
+            "pioggia_modello_30g": None,
+            "pioggia_stazione_30g": tot_dpc,
+            "giorni_pluviometro": giorni_dpc,
+        }
+        return df_dpc, info, forecast, soil, vento
 
     # MN e WC: entro 8 km se i dati sono pieni
     RAGGIO_MN_BUONO = 5.0
