@@ -30,15 +30,31 @@ DATASETS = [
 PRODUCTS = ["B12101", "B13011"]
 
 
-def login(email, password):
-    r = requests.post(f"{BASE}/auth/login", json={"username": email, "password": password}, timeout=30)
-    r.raise_for_status()
+def _try_login(payload):
+    r = requests.post(f"{BASE}/auth/login", json=payload, timeout=30)
+    print(f"  tentativo con chiavi {list(payload.keys())} -> status {r.status_code}")
+    if r.status_code != 200:
+        print("  risposta server:", r.text[:500])
+        return None
     data = r.json()
-    # il campo col token puo' chiamarsi "token" o "access_token" a seconda della versione
-    token = data.get("token") or data.get("access_token") or data
+    token = data.get("token") or data.get("access_token") or data.get("Response") or data
     if isinstance(token, dict):
-        raise SystemExit(f"Risposta di login inattesa, controlla a mano: {data}")
+        # magari il token e' annidato, es. {"Response": "..."} o simili: stampa tutto
+        print("  risposta completa (struttura inattesa):", json.dumps(data, indent=2)[:1000])
+        return None
     return token
+
+
+def login(email, password):
+    print("Provo login...")
+    for payload in (
+        {"username": email, "password": password},
+        {"email": email, "password": password},
+    ):
+        token = _try_login(payload)
+        if token:
+            return token
+    raise SystemExit("\nLogin fallito con entrambe le varianti. Copia il messaggio sopra e mandalo a Claude.")
 
 
 def submit_request(token, minutes_back=60):
