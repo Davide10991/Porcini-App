@@ -380,5 +380,42 @@ def api_csv():
     )
 
 
+
+
+@app.route("/api/meteohub/status")
+@login_required
+def api_meteohub_status():
+    """Stato cache e credenziali MeteoHub (senza esporre la password)."""
+    user, pwd = engine.meteohub._creds()
+    cached = engine.meteohub.load_cache()
+    meta = {}
+    meta_p = engine.meteohub.CACHE_DIR / "meta.json"
+    if meta_p.exists():
+        try:
+            import json as _json
+            meta = _json.loads(meta_p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return jsonify({
+        "credenziali": bool(user and pwd),
+        "user": (user[:2] + "***" + user[-4:]) if user and len(user) > 6 else (user or ""),
+        "cache": bool(cached),
+        "n_stations": len(cached[0]) if cached else 0,
+        "n_series": len(cached[1]) if cached else 0,
+        "meta": meta,
+    })
+
+
+@app.route("/api/meteohub/refresh", methods=["POST"])
+@login_required
+def api_meteohub_refresh():
+    """Forza il download di una nuova estrazione MeteoHub (può richiedere 1–5 min)."""
+    try:
+        stations, series = engine.meteohub.refresh_data(days=35, force=True)
+        return jsonify({"ok": True, "n_stations": len(stations), "n_series": len(series)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8501, debug=False, threaded=True)
