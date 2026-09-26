@@ -855,12 +855,27 @@ MN_PREC_PALETTE = [
     ((113, 127, 249), 5.0),
     ((39, 111, 253), 10.0),
     ((13, 139, 188), 15.0),
+    ((0, 160, 100), 18.0),
     ((13, 183, 98), 20.0),
+    ((0, 176, 95), 22.0),
+    ((11, 180, 95), 22.0),
+    ((40, 200, 60), 28.0),
     ((65, 231, 35), 30.0),
+    ((63, 229, 33), 32.0),
+    ((100, 240, 20), 35.0),
     ((132, 255, 13), 40.0),
+    ((130, 253, 11), 42.0),
+    ((155, 255, 25), 48.0),
     ((175, 255, 35), 50.0),
+    ((168, 254, 22), 52.0),
+    ((174, 252, 33), 55.0),
+    ((200, 255, 40), 58.0),
     ((221, 255, 43), 60.0),
+    ((219, 252, 40), 62.0),
+    ((217, 254, 31), 65.0),
+    ((240, 250, 30), 70.0),
     ((255, 237, 13), 80.0),
+    ((255, 220, 13), 90.0),
     ((255, 193, 13), 100.0),
     ((255, 156, 13), 120.0),
     ((255, 112, 13), 150.0),
@@ -942,33 +957,59 @@ def _mn_get_px(buf, w, h, x, y):
 
 
 def _mn_sample(lat, lon, giorno, variabile, decoder):
+    """Campiona il pixel sulla mappa MN.
+
+    Per la pioggia: nel raggio locale prende il *massimo* tra i pixel terra
+    (le mappe interpolate hanno nuclei colorati; un solo pixel può sottostimare).
+    """
     pack = _mn_mappa_px(giorno, variabile)
     if not pack:
         return None
     try:
         w, h, buf = pack
         x0, y0 = _mn_png_xy(lat, lon, w, h)
-        candidati = [(0, 0)]
-        for rad in range(1, 14):
-            for dx in range(-rad, rad + 1):
-                candidati.append((dx, -rad))
-                candidati.append((dx, rad))
-            for dy in range(-rad + 1, rad):
-                candidati.append((-rad, dy))
-                candidati.append((rad, dy))
-        # prima un pixel terra (non mare): se è beige = 0 mm
-        for dx, dy in candidati:
-            x = max(0, min(w - 1, x0 + dx))
-            y = max(0, min(h - 1, y0 + dy))
-            rgb = _mn_get_px(buf, w, h, x, y)
-            if _mn_e_mare_o_bordo(rgb):
-                continue
-            if variabile == "prec" and _mn_e_terra_asciutta(rgb):
-                return 0.0
-            v = decoder(rgb)
-            if v is not None:
-                return v
-        return 0.0 if variabile == "prec" else None
+        if variabile != "prec":
+            candidati = [(0, 0)]
+            for rad in range(1, 8):
+                for dx in range(-rad, rad + 1):
+                    candidati.append((dx, -rad))
+                    candidati.append((dx, rad))
+                for dy in range(-rad + 1, rad):
+                    candidati.append((-rad, dy))
+                    candidati.append((rad, dy))
+            for dx, dy in candidati:
+                x = max(0, min(w - 1, x0 + dx))
+                y = max(0, min(h - 1, y0 + dy))
+                rgb = _mn_get_px(buf, w, h, x, y)
+                if _mn_e_mare_o_bordo(rgb):
+                    continue
+                v = decoder(rgb)
+                if v is not None:
+                    return v
+            return None
+
+        # PRECIP: max locale (raggio ~18 px ≈ 15-25 km sulla PNG Italia)
+        # le mappe interpolate hanno nuclei spostati di qualche pixel rispetto al geopunto
+        valori = []
+        for dy in range(-18, 19):
+            for dx in range(-18, 19):
+                if dx * dx + dy * dy > 324:
+                    continue
+                x = max(0, min(w - 1, x0 + dx))
+                y = max(0, min(h - 1, y0 + dy))
+                rgb = _mn_get_px(buf, w, h, x, y)
+                if _mn_e_mare_o_bordo(rgb):
+                    continue
+                if _mn_e_terra_asciutta(rgb):
+                    valori.append(0.0)
+                    continue
+                v = decoder(rgb)
+                if v is not None:
+                    valori.append(float(v))
+        if not valori:
+            return 0.0
+        # usa il massimo locale (nucleo temporale sulla mappa)
+        return max(valori)
     except Exception:
         return None
 
