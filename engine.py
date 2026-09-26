@@ -4330,6 +4330,19 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
             info_meteo["pioggia_stazione_30g"] = round(float(pd.to_numeric(df["precip"], errors="coerce").sum()), 1)
         except Exception:
             pass
+        # Sempre: lista giorni CON millimetri (WC/MN/WU/mappe)
+        try:
+            tmp = df.copy()
+            tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            taglio = pd.Timestamp(datetime.now().date() - timedelta(days=30))
+            tmp = tmp[(tmp["date"].notna()) & (tmp["date"] >= taglio) & (tmp["_p"] >= 0.2)]
+            tmp = tmp.sort_values("date")
+            info_meteo["giorni_pluviometro"] = [
+                f"{row['date'].date()}: {float(row['_p']):.1f} mm" for _, row in tmp.iterrows()
+            ]
+        except Exception:
+            pass
     try:
         score, livello, det = calcola_punteggio(
             df, p["tipo"], regole, quota=p.get("quota", 1000),
@@ -4357,12 +4370,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
 def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
-    barra = st.progress(0, text="Aggiorno cache MeteoHub…")
-    try:
-        meta = meteohub.ensure_cache(days=35)
-        barra = st.progress(0, text=f"MeteoHub: {meta.get('n_stations', 0)} stazioni · calcolo 0/{tot}")
-    except Exception as e:
-        barra = st.progress(0, text=f"MeteoHub non disponibile ({e}) · calcolo 0/{tot}")
+    barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
     fatti = 0
     with ThreadPoolExecutor(max_workers=max(1, min(3, max_workers))) as ex:
         fut = {
