@@ -1161,22 +1161,34 @@ def mn_pioggia_mappa(lat, lon, raggio=15):
     """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
     oggi = datetime.now().date()
     rows = []
-    for i in range(30):
+
+    def _giorno(i):
         g = oggi - timedelta(days=i)
         iso = g.isoformat()
         mm = mn_prec_da_mappa(lat, lon, iso)
+        if mm is None:
+            return None
         tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
         tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
         vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
-        if mm is None and tmin is None and tmax is None:
-            continue
-        rows.append({
+        return {
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
             "t_min": None if tmin is None else round(float(tmin), 1),
             "t_max": None if tmax is None else round(float(tmax), 1),
             "vento_max": None if vento is None else round(float(vento), 1),
-        })
+        }
+
+    try:
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for rec in ex.map(_giorno, range(30)):
+                if rec is not None:
+                    rows.append(rec)
+    except Exception:
+        for i in range(30):
+            rec = _giorno(i)
+            if rec is not None:
+                rows.append(rec)
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
@@ -2926,11 +2938,150 @@ def _mappa_smentisce_stazione(df, lat, lon):
     return mappa
 
 
+
+# ---- Wunderground (stesso accesso della tabella web / wundermap, senza key utente) ----
+_WU_KEY_CACHE = {"key": None, "ts": 0}
+
+def _wu_api_key():
+    """Chiave pubblica usata dal sito WU (dashboard/table)."""
+    import time as _t
+    now = _t.time()
+    if _WU_KEY_CACHE["key"] and now - _WU_KEY_CACHE["ts"] < 3600:
+        return _WU_KEY_CACHE["key"]
+    try:
+        r = requests.get(
+            "https://www.wunderground.com/wundermap",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        m = re.search(r'"API_KEY":"([^"]+)"', r.text or "")
+        if m:
+            _WU_KEY_CACHE["key"] = m.group(1)
+            _WU_KEY_CACHE["ts"] = now
+            return _WU_KEY_CACHE["key"]
+    except Exception:
+        pass
+    # fallback: chiave client nota (può ruotare)
+    return "f6d2efe5720d47ea92efe5720df7eaa8"
+
+
+def wu_stazioni_vicine(lat, lon, max_km=5.0, limit=15):
+    """PWS Wunderground vicino al punto (wundermap / location near)."""
+    key = _wu_api_key()
+    try:
+        r = requests.get(
+            "https://api.weather.com/v3/location/near",
+            params={
+                "geocode": f"{float(lat)},{float(lon)}",
+                "product": "pws",
+                "format": "json",
+                "apiKey": key,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.wunderground.com/wundermap",
+            },
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return []
+        loc = (r.json() or {}).get("location") or {}
+        ids = loc.get("stationId") or []
+        names = loc.get("stationName") or []
+        lats = loc.get("latitude") or []
+        lons = loc.get("longitude") or []
+        dists = loc.get("distanceKm") or []
+        out = []
+        for i, sid in enumerate(ids):
+            try:
+                la = float(lats[i]) if i < len(lats) else None
+                lo = float(lons[i]) if i < len(lons) else None
+                d = float(dists[i]) if i < len(dists) else (
+                    distanza_km(lat, lon, la, lo) if la is not None and lo is not None else 999
+                )
+            except Exception:
+                continue
+            if d > float(max_km):
+                continue
+            out.append({
+                "id": str(sid),
+                "nome": str(names[i]) if i < len(names) else str(sid),
+                "lat": la,
+                "lon": lo,
+                "distanza_km": round(d, 2),
+            })
+        out.sort(key=lambda x: x["distanza_km"])
+        return out[:limit]
+    except Exception:
+        return []
+
+
+def wu_serie_giornaliera(station_id, days=30):
+    """Serie daily dalla stessa API della tabella /dashboard/pws/.../table/.../daily."""
+    key = _wu_api_key()
+    end = datetime.now().date()
+    start = end - timedelta(days=int(days or 30))
+    try:
+        r = requests.get(
+            "https://api.weather.com/v2/pws/history/daily",
+            params={
+                "stationId": station_id,
+                "format": "json",
+                "units": "m",
+                "startDate": start.strftime("%Y%m%d"),
+                "endDate": end.strftime("%Y%m%d"),
+                "apiKey": key,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": f"https://www.wunderground.com/dashboard/pws/{station_id}/table",
+                "Accept": "application/json",
+            },
+            timeout=25,
+        )
+        if r.status_code != 200:
+            return None
+        obs = (r.json() or {}).get("observations") or []
+        recs = []
+        for o in obs:
+            try:
+                metric = o.get("metric") or {}
+                day = str(o.get("obsTimeLocal") or "")[:10]
+                if not day:
+                    continue
+                precip = metric.get("precipTotal")
+                if precip is None:
+                    precip = 0.0
+                recs.append({
+                    "date": pd.Timestamp(day),
+                    "precip": float(precip or 0),
+                    "t_max": metric.get("tempHigh"),
+                    "t_min": metric.get("tempLow"),
+                    "t_mean": metric.get("tempAvg"),
+                    "vento_max": (
+                        float(metric.get("windgustHigh") or 0)
+                        if metric.get("windgustHigh") is not None
+                        else (
+                            float(metric.get("windspeedHigh") or 0)
+                            if metric.get("windspeedHigh") is not None
+                            else None
+                        )
+                    ),
+                })
+            except Exception:
+                continue
+        if len(recs) < 5:
+            return None
+        return pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+    except Exception:
+        return None
+
+
 def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
     """Stazioni affidabili entro 5 km (tutte le regioni), poi mappa MN se scoperto.
 
     Ordine:
-      1) Caput Frigoris / MeteoNetwork / WeatherCloud / MeteoHub entro max_km (default 5)
+      1) Caput Frigoris / MeteoNetwork / WeatherCloud / Wunderground entro max_km (default 5)
       2) Scarta pluviometri morti (quasi solo zeri)
       3) Se nessuna stazione valida → mappa giornaliera MeteoNetwork sul punto
     """
@@ -2955,19 +3106,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if df is not None and len(df) and "precip" in df.columns:
             p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
             mm = round(float(p.sum()), 1)
-            for _, row in df.iterrows():
+            tmp = df.copy()
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            tmp = tmp[tmp["_p"] >= 0.2].sort_values("date")
+            for _, row in tmp.iterrows():
                 try:
-                    if float(row.get("precip") or 0) >= 0.2:
-                        giorni.append(str(row.get("date"))[:10])
+                    d = str(row.get("date"))[:10]
+                    giorni.append(f"{d}: {float(row['_p']):.1f} mm")
                 except Exception:
                     pass
+            # se non ci sono giorni umidi ma totale > 0, segnala
+            if not giorni and mm and mm >= 0.2:
+                giorni.append(f"totale 30g: {mm} mm")
         return {
             "fonte": fonte,
             "stazione": stazione or "n/d",
             "distanza_km": round(dist, 2) if dist is not None else None,
             "quota_stazione": q_st,
             "pioggia_stazione_30g": mm,
-            "giorni_pluviometro": giorni[-15:],
+            "giorni_pluviometro": giorni[-20:],
             "stima_mappa": False,
         }
 
@@ -3151,21 +3308,83 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             pass
 
-    # ---- 4) MeteoHub (se cache presente e stazione entro 5 km) ----
+    # ---- 4) Wunderground (tabella dashboard PWS, come wundermap / FM) ----
     try:
-        df_mh, info_mh = meteohub.get_meteo_punto(
-            lat, lon,
-            days=days,
-            quota=quota_f,
-            max_km=max_km,
-            auto_refresh=False,
-        )
-        if df_mh is not None and len(df_mh) >= 5:
-            sc = _score_df(df_mh, (info_mh or {}).get("distanza_km"))
-            if sc >= 0:
-                info_mh = info_mh or {}
-                info_mh["stima_mappa"] = False
-                candidati.append({"score": sc + 2.0, "df": df_mh, "info": info_mh})
+        wu_near = wu_stazioni_vicine(lat, lon, max_km=max_km, limit=12)
+        for s in wu_near:
+            try:
+                df_wu = wu_serie_giornaliera(s["id"], days=days)
+            except Exception:
+                df_wu = None
+            if df_wu is None or len(df_wu) < 5:
+                continue
+            sc = _score_df(df_wu, s.get("distanza_km"))
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc + 5.0,  # bonus WU (fonte principale FunghiMagazine)
+                "df": df_wu,
+                "info": _info_base(
+                    f"Wunderground · {s.get('nome')} ({s.get('id')})",
+                    f"{s.get('nome')} [{s.get('id')}]",
+                    s.get("distanza_km"),
+                    None,
+                    df_wu,
+                ),
+            })
+    except Exception:
+        pass
+
+    # ---- 4b) PDF Semaforo FunghiMagazine (stazioni WU processate da FM) ----
+    try:
+        reg = (regione or "").strip()
+        nome_z = (nome_zona or "").lower()
+        candidati_slug = []
+        for rname, slugs in (FM_LOCALITA or {}).items():
+            if reg and rname.lower() not in reg.lower() and reg.lower() not in rname.lower():
+                # se regione non combacia, valuta comunque match per nome
+                pass
+            for slug in slugs:
+                if slug in nome_z or any(p in nome_z for p in slug.split() if len(p) > 4):
+                    candidati_slug.append(slug)
+        # match generici utili
+        for token, slug in [
+            ("capracotta", "capracotta"), ("pescasseroli", "pescasseroli"),
+            ("roccaraso", "roccaraso"), ("agnone", "agnone"),
+            ("sangro", "castel-di-sangro"), ("matese", "piedimonte-matese"),
+            ("ovindoli", "ovindoli"), ("scanno", "scanno"),
+        ]:
+            if token in nome_z:
+                candidati_slug.append(slug)
+        seen = set()
+        for slug in candidati_slug:
+            if slug in seen:
+                continue
+            seen.add(slug)
+            df_fm = None
+            for quale in ("corrente", "precedente"):
+                try:
+                    df_fm = fm_pdf_mese(slug, quale=quale)
+                except Exception:
+                    df_fm = None
+                if df_fm is not None and len(df_fm) >= 5:
+                    break
+            if df_fm is None or len(df_fm) < 5:
+                continue
+            sc = _score_df(df_fm, 2.0)
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc + 6.0,  # bonus forte: stazioni curate FM (WU verificate)
+                "df": df_fm,
+                "info": _info_base(
+                    f"FunghiMagazine/WU · {slug}",
+                    slug,
+                    0.0,
+                    None,
+                    df_fm,
+                ),
+            })
     except Exception:
         pass
 
@@ -3200,25 +3419,54 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             pass
 
-    # ---- 5) Zone scoperte: mappa giornaliera MeteoNetwork ----
+    # ---- 5) Zone scoperte: mappa giornaliera MeteoNetwork (poi DPC/ICON) ----
     if df is None or _pluvio_morto(df):
         try:
             mappa = mn_pioggia_mappa(lat, lon, 15) or {}
             mdf = mappa.get("df")
             mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
-            if mdf is not None and len(mdf) >= 5 and mm_m >= 0:
+            if mdf is not None and len(mdf) >= 5:
                 df = mdf.copy()
+                giorni = []
+                tmp = df.copy()
+                tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+                for _, row in tmp[tmp["_p"] >= 0.2].sort_values("date").iterrows():
+                    giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
                 info = {
                     "fonte": "Mappa giornaliera MeteoNetwork",
                     "stazione": "pixel mappa MN",
                     "distanza_km": 0,
                     "quota_stazione": None,
                     "pioggia_stazione_30g": round(mm_m, 1),
-                    "giorni_pluviometro": [],
+                    "giorni_pluviometro": giorni[-20:],
                     "stima_mappa": True,
                 }
         except Exception:
             pass
+        if df is None or _pluvio_morto(df):
+            try:
+                dpc = dpc_serie_giorni(lat, lon, giorni=min(days, 20))
+                if dpc is not None and len(dpc) >= 8 and not _pluvio_morto(dpc):
+                    df = dpc.copy()
+                    p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+                    giorni = []
+                    for _, row in df.iterrows():
+                        try:
+                            if float(row.get("precip") or 0) >= 0.2:
+                                giorni.append(f"{str(row.get('date'))[:10]}: {float(row['precip']):.1f} mm")
+                        except Exception:
+                            pass
+                    info = {
+                        "fonte": "Radar DPC (cumulata pluviometri)",
+                        "stazione": "cella radar DPC",
+                        "distanza_km": 0,
+                        "quota_stazione": None,
+                        "pioggia_stazione_30g": round(float(p.sum()), 1),
+                        "giorni_pluviometro": giorni[-20:],
+                        "stima_mappa": True,
+                    }
+            except Exception:
+                pass
 
     if info is None:
         info = {
