@@ -1527,17 +1527,19 @@ SEED_LAZ201_AGO2026 = {
 
 
 def _carica_giorni_file():
+    """Carica sempre da disco (Flask non ha session Streamlit persistente)."""
     store = st.session_state.setdefault("mn_giorni", {})
     path = _path_giorni_salvati()
-    if path.exists() and not st.session_state.get("mn_giorni_file_ok"):
+    if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
+            if isinstance(data, dict) and data:
+                # merge: file ha priorità sui giorni presenti
                 store.update(data)
-            st.session_state["mn_giorni_file_ok"] = True
+                st.session_state["mn_giorni"] = store
+                st.session_state["mn_giorni_file_ok"] = True
         except Exception:
             pass
-        _salva_giorni_file()
     if not st.session_state.get("seed_laz201_ok"):
         for giorno, mm in SEED_LAZ201_AGO2026.items():
             chiave = f"laz201|{giorno}"
@@ -1545,7 +1547,6 @@ def _carica_giorni_file():
                 store[chiave] = {"date": giorno, "precip": mm}
         st.session_state["mn_giorni"] = store
         st.session_state["seed_laz201_ok"] = True
-        _salva_giorni_file()
     return store
 
 
@@ -3914,7 +3915,7 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     p = dict(p)
     p["tipo"] = classifica_bosco(
         p.get("nome"), p.get("quota"), p.get("regione"), p.get("lat"), p.get("tipo")
@@ -4105,7 +4106,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
     barra = st.progress(0, text="Aggiorno cache MeteoHub…")
