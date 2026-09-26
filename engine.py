@@ -988,12 +988,12 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     return v
             return None
 
-        # PRECIP: max locale (raggio ~18 px ≈ 15-25 km sulla PNG Italia)
-        # le mappe interpolate hanno nuclei spostati di qualche pixel rispetto al geopunto
+        # PRECIP: max locale (raggio ~20 px) — unica logica per TUTTE le zone/giorni
+        # le mappe interpolate hanno nuclei spostati rispetto al geopunto esatto
         valori = []
-        for dy in range(-18, 19):
-            for dx in range(-18, 19):
-                if dx * dx + dy * dy > 324:
+        for dy in range(-20, 21):
+            for dx in range(-20, 21):
+                if dx * dx + dy * dy > 400:
                     continue
                 x = max(0, min(w - 1, x0 + dx))
                 y = max(0, min(h - 1, y0 + dy))
@@ -1061,6 +1061,7 @@ def _mn_mappa_px(giorno, variabile="prec"):
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
+    """Pioggia giornaliera da mappa MN: sempre max locale (stessa logica ovunque)."""
     return _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
 
 
@@ -1235,14 +1236,15 @@ def mn_pioggia_mappa(lat, lon, raggio=15):
     df = pd.DataFrame(rows).sort_values("date")
     try:
         vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
-        if len(vals) >= 8:
+        if len(vals) >= 10:
             vc = vals.value_counts()
             top, ntop = float(vc.index[0]), int(vc.iloc[0])
-            # stesso mm tutti i giorni = pixel sbagliato (mare/legenda)
-            if top > 0 and ntop / len(vals) >= 0.55:
+            # solo se quasi TUTTI i giorni hanno lo stesso mm > 0 (cella legenda/mare)
+            if top > 5 and ntop / len(vals) >= 0.85:
                 return None
+            # totale assurdo con pochissimi valori distinti
             tot_chk = float(vals.sum())
-            if tot_chk > 280 and vals.nunique() <= 4:
+            if tot_chk > 450 and vals.nunique() <= 3:
                 return None
     except Exception:
         pass
