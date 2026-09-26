@@ -988,12 +988,11 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     return v
             return None
 
-        # PRECIP: max locale (raggio ~20 px) — unica logica per TUTTE le zone/giorni
-        # le mappe interpolate hanno nuclei spostati rispetto al geopunto esatto
+        # PRECIP: max locale (raggio 18 px) — stessa logica accurata su tutte le zone
         valori = []
-        for dy in range(-20, 21):
-            for dx in range(-20, 21):
-                if dx * dx + dy * dy > 400:
+        for dy in range(-18, 19):
+            for dx in range(-18, 19):
+                if dx * dx + dy * dy > 324:
                     continue
                 x = max(0, min(w - 1, x0 + dx))
                 y = max(0, min(h - 1, y0 + dy))
@@ -1008,7 +1007,6 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     valori.append(float(v))
         if not valori:
             return 0.0
-        # usa il massimo locale (nucleo temporale sulla mappa)
         return max(valori)
     except Exception:
         return None
@@ -1037,14 +1035,14 @@ def _mn_mappa_px(giorno, variabile="prec"):
     )
     try:
         r = None
-        for _t in range(3):
+        for _t in range(2):
             try:
-                r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+                r = requests.get(url, timeout=4, headers={"User-Agent": "Mozilla/5.0"})
                 if r.status_code == 200 and len(r.content) >= 10000:
                     break
             except Exception:
                 r = None
-                time.sleep(0.4)
+                time.sleep(0.2)
         if r is None or r.status_code != 200 or len(r.content) < 10000:
             return None
         from PIL import Image
@@ -1199,59 +1197,68 @@ def dpc_serie_giorni(lat, lon, giorni=30, max_workers=5):
     return df
 
 
-def mn_pioggia_mappa(lat, lon, raggio=15):
-    """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
+@lru_cache(maxsize=512)
+def _mn_pioggia_mappa_cached(lat_r, lon_r):
+    """Cache per punto arrotondato: evita 3-4 download ripetuti sullo stesso bosco."""
+    lat, lon = float(lat_r) / 100.0, float(lon_r) / 100.0
     oggi = datetime.now().date()
     rows = []
-
-    def _giorno(i):
+    for i in range(30):
         g = oggi - timedelta(days=i)
         iso = g.isoformat()
-        mm = mn_prec_da_mappa(lat, lon, iso)
+        try:
+            mm = mn_prec_da_mappa(lat, lon, iso)
+        except Exception:
+            mm = None
         if mm is None:
-            return None
+            continue
         tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
         tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
         vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
-        return {
+        rows.append({
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
             "t_min": None if tmin is None else round(float(tmin), 1),
             "t_max": None if tmax is None else round(float(tmax), 1),
             "vento_max": None if vento is None else round(float(vento), 1),
-        }
-
-    try:
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            for rec in ex.map(_giorno, range(30)):
-                if rec is not None:
-                    rows.append(rec)
-    except Exception:
-        for i in range(30):
-            rec = _giorno(i)
-            if rec is not None:
-                rows.append(rec)
+        })
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
+    tot = round(float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum()), 1)
+    oggi_ts = pd.Timestamp(oggi)
+    oggi_mm = 0.0
     try:
-        vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
-        if len(vals) >= 10:
-            vc = vals.value_counts()
-            top, ntop = float(vc.index[0]), int(vc.iloc[0])
-            # solo se quasi TUTTI i giorni hanno lo stesso mm > 0 (cella legenda/mare)
-            if top > 5 and ntop / len(vals) >= 0.85:
-                return None
-            # totale assurdo con pochissimi valori distinti
-            tot_chk = float(vals.sum())
-            if tot_chk > 450 and vals.nunique() <= 3:
-                return None
+        if (df["date"] == oggi_ts).any():
+            oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0])
     except Exception:
         pass
-    tot = round(float(df["precip"].sum()), 1)
-    oggi_ts = pd.Timestamp(oggi)
-    oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0]) if (df["date"] == oggi_ts).any() else 0.0
     return {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows)}
+
+
+def mn_pioggia_mappa(lat, lon, raggio=15):
+    """Legge le PNG mappe giornaliere MN sul punto, ultimi 30 giorni (unica via, con cache)."""
+    try:
+        lat_r = int(round(float(lat) * 100))
+        lon_r = int(round(float(lon) * 100))
+    except Exception:
+        return None
+    try:
+        out = _mn_pioggia_mappa_cached(lat_r, lon_r)
+    except Exception:
+        out = None
+    if not out:
+        return None
+    # copia df per non condividere tra thread
+    try:
+        return {
+            "df": out["df"].copy(),
+            "oggi_mm": out.get("oggi_mm"),
+            "mese_mm": out.get("mese_mm"),
+            "n": out.get("n"),
+        }
+    except Exception:
+        return out
 
 
 def _ultimi_30g(df):
@@ -4413,6 +4420,11 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
 def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
+    barra = st.progress(0, text="Precarico mappe MN…")
+    try:
+        mn_preload_mappe(30)
+    except Exception:
+        pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
     fatti = 0
     with ThreadPoolExecutor(max_workers=max(1, min(3, max_workers))) as ex:
