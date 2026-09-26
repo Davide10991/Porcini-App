@@ -2925,37 +2925,315 @@ def _mappa_smentisce_stazione(df, lat, lon):
     return mappa
 
 
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
-    """Unica fonte: MeteoHub (ItaliaMeteo). Tutte le altre reti sono dismesse.
-    Firma invariata per compatibilità con analizza_punto / sito.py.
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
+    """Stazioni affidabili entro 5 km (tutte le regioni), poi mappa MN se scoperto.
+
+    Ordine:
+      1) Caput Frigoris / MeteoNetwork / WeatherCloud / MeteoHub entro max_km (default 5)
+      2) Scarta pluviometri morti (quasi solo zeri)
+      3) Se nessuna stazione valida → mappa giornaliera MeteoNetwork sul punto
     """
     forecast = None
     soil = None
     vento = riepilogo_vento(None)
+    lat = float(lat)
+    lon = float(lon)
+    days = int(days or 30)
+    max_km = float(max_km_stazione if max_km_stazione is not None else 5)
+    if max_km <= 0:
+        max_km = 5.0
+    # utente: non oltre 5 km per stazioni "vicine"
+    max_km = min(max_km, 5.0)
+    quota_f = float(quota) if quota is not None else None
 
+    candidati = []  # list of dict: score, df, info
+
+    def _info_base(fonte, stazione, dist, q_st, df):
+        mm = None
+        giorni = []
+        if df is not None and len(df) and "precip" in df.columns:
+            p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+            mm = round(float(p.sum()), 1)
+            for _, row in df.iterrows():
+                try:
+                    if float(row.get("precip") or 0) >= 0.2:
+                        giorni.append(str(row.get("date"))[:10])
+                except Exception:
+                    pass
+        return {
+            "fonte": fonte,
+            "stazione": stazione or "n/d",
+            "distanza_km": round(dist, 2) if dist is not None else None,
+            "quota_stazione": q_st,
+            "pioggia_stazione_30g": mm,
+            "giorni_pluviometro": giorni[-15:],
+            "stima_mappa": False,
+        }
+
+    def _score_df(df, dist_km):
+        if df is None or len(df) < 5 or "precip" not in df.columns:
+            return -1
+        if _pluvio_morto(df):
+            return -1
+        p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+        tot = float(p.sum())
+        umidi = int((p >= 0.4).sum())
+        # preferisci più giorni, più pioggia reale, distanza minore
+        return umidi * 3.0 + min(tot, 120) * 0.15 + max(0, 5.0 - float(dist_km or 5)) * 2.0
+
+    # ---- 1) Caput Frigoris (tutte le regioni dove c'è stazione in CF_STAZIONI) ----
     try:
-        df, info = meteohub.get_meteo_punto(
-            float(lat),
-            float(lon),
-            days=int(days or 30),
-            quota=float(quota) if quota is not None else None,
-            max_km=float(max_km_stazione or 35),
-            auto_refresh=True,
+        cf = cf_stazione_vicina(lat, lon, max_km=max_km)
+        if cf:
+            scheda = cf_scheda(cf["id"]) or {}
+            mese_mm = scheda.get("mese_mm")
+            # costruisci serie grezza: se abbiamo solo mese, distribuisci in modo neutro
+            # meglio usare store locale se presente
+            store = {}
+            try:
+                store = _carica_giorni_file() or {}
+            except Exception:
+                store = {}
+            recs = []
+            oggi = datetime.now().date()
+            for i in range(days):
+                d = oggi - timedelta(days=i)
+                key = f"cf:{cf['id']}|{d.isoformat()}"
+                old = store.get(key) or {}
+                if old:
+                    recs.append({
+                        "date": pd.Timestamp(d),
+                        "precip": float(old.get("precip") or 0),
+                        "t_max": old.get("t_max"),
+                        "t_min": old.get("t_min"),
+                        "t_mean": old.get("t_med") or old.get("t_mean"),
+                    })
+            if not recs and mese_mm is not None and float(mese_mm) >= 0:
+                # un solo valore mensile noto: metti il totale sull'ultimo giorno del mese
+                # e 0 altrove (meglio del nulla; analizza_punto usa la somma)
+                for i in range(days):
+                    d = oggi - timedelta(days=i)
+                    mm = float(mese_mm) if i == 0 else 0.0
+                    recs.append({
+                        "date": pd.Timestamp(d),
+                        "precip": mm,
+                        "t_max": scheda.get("t_max"),
+                        "t_min": scheda.get("t_min"),
+                        "t_mean": scheda.get("t_med"),
+                    })
+            if recs:
+                df_cf = pd.DataFrame(recs).sort_values("date")
+                # se solo totale mensile sul giorno 0, non usare _pluvio_morto (umidi=1)
+                sc = _score_df(df_cf, cf["distanza_km"])
+                if sc < 0 and mese_mm is not None and float(mese_mm) >= 8:
+                    sc = 8.0 + min(float(mese_mm), 100) * 0.1
+                if sc >= 0:
+                    candidati.append({
+                        "score": sc + 5.0,  # leggero bonus CF (rete curata)
+                        "df": df_cf,
+                        "info": _info_base(
+                            f"Caput Frigoris · {cf.get('nome')}",
+                            cf.get("nome"),
+                            cf.get("distanza_km"),
+                            None,
+                            df_cf,
+                        ),
+                    })
+    except Exception:
+        pass
+
+    # ---- 2) MeteoNetwork da archivio locale (tutte le regioni nel catalogo) ----
+    try:
+        if stazioni_mn is None:
+            try:
+                stazioni_mn = mn_catalogo_pubblico() or []
+            except Exception:
+                stazioni_mn = []
+            try:
+                path = Path(__file__).resolve().parent / "mn_centro.json"
+                if path.exists():
+                    cat = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(cat, dict):
+                        cat = cat.get("stations") or cat.get("data") or list(cat.values())
+                    if isinstance(cat, list) and cat:
+                        stazioni_mn = cat
+            except Exception:
+                pass
+        vicine = mn_stazioni_vicine(lat, lon, stazioni_mn or [], quota=quota_f, n=8, max_km=max_km)
+        store = {}
+        try:
+            store = _carica_giorni_file() or {}
+        except Exception:
+            store = {}
+        oggi = datetime.now().date()
+        for stz in vicine:
+            code = str(stz.get("code") or stz.get("id") or "")
+            if not code:
+                continue
+            recs = []
+            for i in range(days):
+                d = oggi - timedelta(days=i)
+                old = store.get(f"{code}|{d.isoformat()}") or {}
+                if not old:
+                    continue
+                recs.append({
+                    "date": pd.Timestamp(d),
+                    "precip": float(old.get("precip") or 0),
+                    "t_max": old.get("t_max"),
+                    "t_min": old.get("t_min"),
+                    "t_mean": old.get("t_med") or old.get("t_mean"),
+                    "vento_max": old.get("vento_max"),
+                })
+            if len(recs) < 8:
+                continue
+            df_mn = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+            sc = _score_df(df_mn, stz.get("distanza_km"))
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc,
+                "df": df_mn,
+                "info": _info_base(
+                    f"MeteoNetwork · {stz.get('nome') or code}",
+                    stz.get("nome") or code,
+                    stz.get("distanza_km"),
+                    stz.get("quota") or stz.get("altitude"),
+                    df_mn,
+                ),
+            })
+    except Exception:
+        pass
+
+    # ---- 3) WeatherCloud (catalogo centro-sud, tutte le zone coperte) ----
+    if usa_wc:
+        try:
+            cat_wc = wc_catalogo() or []
+            ranked = []
+            for s in cat_wc:
+                try:
+                    d = distanza_km(lat, lon, float(s["lat"]), float(s["lon"]))
+                except Exception:
+                    continue
+                if d > max_km:
+                    continue
+                ranked.append((d, s))
+            ranked.sort(key=lambda x: x[0])
+            for d, s in ranked[:6]:
+                did = s.get("id") or s.get("code")
+                if not did:
+                    continue
+                try:
+                    df_wc = wc_mese_pioggia(did)
+                except Exception:
+                    df_wc = None
+                if df_wc is None or len(df_wc) < 5:
+                    try:
+                        df_wc = wc_mese_mm(did)
+                    except Exception:
+                        df_wc = None
+                if df_wc is None or len(df_wc) < 5:
+                    continue
+                sc = _score_df(df_wc, d)
+                if sc < 0:
+                    continue
+                candidati.append({
+                    "score": sc,
+                    "df": df_wc,
+                    "info": _info_base(
+                        f"WeatherCloud · {s.get('nome') or did}",
+                        s.get("nome") or str(did),
+                        d,
+                        None,
+                        df_wc,
+                    ),
+                })
+        except Exception:
+            pass
+
+    # ---- 4) MeteoHub (se cache presente e stazione entro 5 km) ----
+    try:
+        df_mh, info_mh = meteohub.get_meteo_punto(
+            lat, lon,
+            days=days,
+            quota=quota_f,
+            max_km=max_km,
+            auto_refresh=False,
         )
-    except Exception as e:
+        if df_mh is not None and len(df_mh) >= 5:
+            sc = _score_df(df_mh, (info_mh or {}).get("distanza_km"))
+            if sc >= 0:
+                info_mh = info_mh or {}
+                info_mh["stima_mappa"] = False
+                candidati.append({"score": sc + 2.0, "df": df_mh, "info": info_mh})
+    except Exception:
+        pass
+
+    # ---- scegli la migliore stazione ----
+    candidati = [c for c in candidati if c.get("score", -1) >= 0 and c.get("df") is not None]
+    candidati.sort(key=lambda x: -x["score"])
+
+    df = None
+    info = None
+    if candidati:
+        best = candidati[0]
+        df = best["df"]
+        info = best["info"]
+        # se la mappa MN smentisce la stazione, scarta e prova la successiva
+        try:
+            sm = _mappa_smentisce_stazione(df, lat, lon)
+            if sm is not None and len(candidati) > 1:
+                best = candidati[1]
+                df = best["df"]
+                info = best["info"]
+            elif sm is not None and sm.get("df") is not None:
+                df = sm["df"]
+                info = {
+                    "fonte": "Mappa MeteoNetwork (stazione smentita)",
+                    "stazione": "pixel mappa",
+                    "distanza_km": 0,
+                    "quota_stazione": None,
+                    "pioggia_stazione_30g": sm.get("mese_mm"),
+                    "giorni_pluviometro": [],
+                    "stima_mappa": True,
+                }
+        except Exception:
+            pass
+
+    # ---- 5) Zone scoperte: mappa giornaliera MeteoNetwork ----
+    if df is None or _pluvio_morto(df):
+        try:
+            mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+            mdf = mappa.get("df")
+            mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
+            if mdf is not None and len(mdf) >= 5 and mm_m >= 0:
+                df = mdf.copy()
+                info = {
+                    "fonte": "Mappa giornaliera MeteoNetwork",
+                    "stazione": "pixel mappa MN",
+                    "distanza_km": 0,
+                    "quota_stazione": None,
+                    "pioggia_stazione_30g": round(mm_m, 1),
+                    "giorni_pluviometro": [],
+                    "stima_mappa": True,
+                }
+        except Exception:
+            pass
+
+    if info is None:
         info = {
-            "fonte": f"MeteoHub errore: {e}",
+            "fonte": "nessuna stazione ≤5 km né mappa MN",
             "stazione": "n/d",
             "distanza_km": None,
             "quota_stazione": None,
             "pioggia_stazione_30g": None,
             "giorni_pluviometro": [],
+            "stima_mappa": False,
         }
-        return None, info, forecast, soil, vento
 
     if df is not None and len(df) and "precip" in df.columns:
         vento = riepilogo_vento(df)
     return df, info, forecast, soil, vento
+
 
 
 def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
