@@ -1004,7 +1004,12 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     continue
                 v = decoder(rgb)
                 if v is not None:
-                    valori.append(float(v))
+                    fv = float(v)
+                    # ignora tracce di palette (rumore sfondo mappa)
+                    if fv >= 2.5:
+                        valori.append(fv)
+                    else:
+                        valori.append(0.0)
         if not valori:
             return 0.0
         return max(valori)
@@ -1059,8 +1064,18 @@ def _mn_mappa_px(giorno, variabile="prec"):
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
-    """Pioggia giornaliera da mappa MN: sempre max locale (stessa logica ovunque)."""
-    return _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
+    """Pioggia giornaliera da mappa MN: max locale; sotto 2.5 mm = rumore pixel."""
+    v = _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except Exception:
+        return 0.0
+    # 0.1–2.0 mm ripetuti ogni giorno = artefatto legenda/sfondo, non pioggia reale
+    if v < 2.5:
+        return 0.0
+    return round(v, 1)
 
 
 def mn_preload_mappe(giorni=30):
@@ -1225,6 +1240,22 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
+    try:
+        vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
+        # serie "1.0 mm tutti i giorni" = pixel sbagliato (sfondo/legenda)
+        if len(vals) >= 8:
+            vc = vals[vals > 0].value_counts()
+            if len(vc):
+                top, ntop = float(vc.index[0]), int(vc.iloc[0])
+                if top <= 2.0 and ntop >= max(5, int(0.35 * len(vals))):
+                    vals = vals.where(vals != top, 0.0)
+                # quasi tutti i giorni stesso valore basso-medio sospetto
+                if top <= 5.0 and ntop / max(1, len(vals)) >= 0.55:
+                    vals = vals.where(vals != top, 0.0)
+            df = df.copy()
+            df["precip"] = vals.values
+    except Exception:
+        pass
     tot = round(float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum()), 1)
     oggi_ts = pd.Timestamp(oggi)
     oggi_mm = 0.0
@@ -3627,32 +3658,36 @@ def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
 
 
 def _soglia_spugnata(t_max_media=20.0, siccita=False):
-    """Più caldo e più siccità prima, più mm servono. Base ~40 mm."""
+    """Più caldo e più siccità prima, più mm servono. Base ~40 mm.
+    Il caldo alza un po' la soglia, ma non oltre ~48 (prima arrivava a 58 e
+    escludeva spugnete reali da 50-55 mm)."""
     t = float(t_max_media or 20)
     soglia = 40.0
     if t >= 28:
-        soglia = 58.0
+        soglia = 48.0
     elif t >= 25:
-        soglia = 50.0
+        soglia = 45.0
     elif t >= 22:
-        soglia = 44.0
+        soglia = 42.0
     elif t <= 16:
         soglia = 34.0
     if siccita:
-        soglia += 10.0
-    return soglia
+        soglia += 6.0
+    return min(52.0, soglia)
 
 
 def _mm_efficaci(mm):
-    """Pioggia moderata penetra; i diluvi scivolano."""
+    """Pioggia moderata penetra bene; i diluvi parzialmente.
+    Distribuita (più giorni) viene valorizzata a monte con bonus sulla soglia."""
     mm = float(mm or 0)
     if mm <= 0:
         return 0.0
-    if 3 <= mm <= 18:
+    if 2 <= mm <= 25:
         return mm
-    if mm > 18:
-        return 18.0 + (mm - 18.0) * 0.45
-    return mm * 0.8
+    if mm > 25:
+        # es. 56 mm → 25 + 31*0.55 ≈ 42 mm efficaci (prima era ~35)
+        return 25.0 + (mm - 25.0) * 0.55
+    return mm * 0.85
 
 
 def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
@@ -3743,6 +3778,15 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
         ottimale = (16 <= float(t_max_media or 20) <= 24) and float(fattore_v or 1) >= 0.7
         if terreno_umido:
             soglia *= 0.52 if ottimale else 0.62
+        # Acqua distribuita su più giorni = migliore penetrazione → soglia più bassa
+        if n_gg >= 4:
+            soglia *= 0.78
+        elif n_gg >= 3:
+            soglia *= 0.85
+        elif n_gg >= 2:
+            soglia *= 0.92
+        # Accetta se: efficaci >= soglia, oppure totale grezzo del cluster >= soglia,
+        # oppure (totale mese già buono e cluster >= 38 mm grezzi)
         if mm_eff < soglia and mm < soglia:
             continue
         # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
@@ -3834,8 +3878,10 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "ACQUA DEBOLE",
             "testo": (
-                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma non una spugnata da ~40 mm "
-                "distribuita. Serve altra acqua per far partire una buttata."
+                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma nessuna spugnata abbastanza "
+                "concentrata (serve un blocco di pioggia ~40 mm in pochi giorni, meglio se "
+                "distribuita su 2–4 giorni). Con questo totale serve ancora un'onda utile "
+                "per far partire la buttata."
             ),
         }
     attive = [b for b in buttate if b.get("attiva")]
