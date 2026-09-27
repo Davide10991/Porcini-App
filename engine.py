@@ -3691,25 +3691,44 @@ def _mm_efficaci(mm):
 
 
 def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
-    """Faggio ~14 gg, castagno ~12, quercia ~10. Il caldo accorcia un filo."""
+    """Giorni tra la *spugnata* e le *prime nascite* (inizio buttata).
+
+    La buttata non parte il giorno della pioggia: parte quando escono i primi
+    funghi, dopo un'attesa che dipende dal bosco:
+      - castagno / quercia / leccio / misto ≈ 8–10 gg (uso 9)
+      - faggio / abeti ≈ 12–14 gg (uso 13)
+    Il caldo accorcia di 1–2 giorni; il freddo allunga.
+    """
     t = tipo_bosco or "faggio"
     if t in ("faggio", "abete_bianco", "abete_rosso"):
-        g = 14
+        g = 13
     elif t == "castagno":
-        g = 12
+        g = 9
     else:
-        g = 10
+        # quercia, leccio, misto_carpino_quercia, …
+        g = 9
     tm = float(t_max_media or 20)
-    if tm >= 26:
-        g = max(8, g - 2)
+    if tm >= 28:
+        g = max(7, g - 2)
+    elif tm >= 25:
+        g = max(8, g - 1)
     elif tm <= 16:
         g += 2
     return g
 
 
 def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco="faggio", quota=1000, soil=None):
-    """Spugnata ~40 mm (più se caldo/siccità), meglio distribuita.
-    Nascite dopo 14/12/10 gg. Durata media 2 settimane, non un mese."""
+    """Trova le buttate a partire dalle spugnate.
+
+    Flusso:
+      1) spugnata (~40 mm, meglio se distribuita su 2–4 giorni)
+      2) attesa giorni_attesa (castagno/quercia ~9, faggio ~13) → *prime nascite*
+      3) buttata = periodo di fruttificazione ~14 giorni (un po' di più se tanta
+         acqua e umidità, un po' di meno se caldo/vento secco)
+      4) nuova pioggia durante la buttata può *incrociare* una seconda onda
+
+    La buttata inizia alle nascite, non al giorno della pioggia.
+    """
     if df is None or len(df) == 0 or "precip" not in df.columns:
         return []
     d = df.copy()
@@ -3801,10 +3820,13 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             durata += 1
         if quota and quota >= 1200:
             durata += 1
-        if t_max_media >= 27:
-            durata = round(durata * 0.72)
+        # caldo accorcia un filo, ma non dimezza (media resta ~12–14 gg)
+        if t_max_media >= 29:
+            durata = round(durata * 0.82)
+        elif t_max_media >= 26:
+            durata = round(durata * 0.90)
         elif t_max_media >= 24:
-            durata = round(durata * 0.88)
+            durata = round(durata * 0.95)
         if fattore_v < 0.45:
             durata = round(durata * 0.65)
         elif fattore_v < 0.7:
@@ -3915,11 +3937,13 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "IN CORSO",
             "testo": (
-                f"Buttata INIZIATA il {b['inizio']} — oggi è il giorno {giorno}. "
-                f"Resta aperta fino al {b['fine']}"
-                + (f" ({restano} giorni)" if restano is not None else "")
-                + f". Innescata da {b['pioggia_mm']} mm il {b['data_pioggia']}. "
-                "Se ripiove abbastanza con temperature ok, può incrociarsi una seconda."
+                f"Buttata in corso: prime nascite dal {b['inizio']} "
+                f"(oggi giorno {giorno} di fruttificazione). "
+                f"Dovrebbe tenere fino al {b['fine']}"
+                + (f" (ancora ~{restano} giorni)" if restano is not None else "")
+                + f", finché il micelio trova umidità. "
+                f"Spugnata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                "Se ripiove, può incrociarsi una nuova onda."
             ),
         }
     if future:
@@ -3930,8 +3954,10 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "IN ATTESA",
             "testo": (
-                f"La buttata NON è ancora nata. Pioggia buona {b['pioggia_mm']} mm il {b['data_pioggia']}. "
-                f"Attendi ancora {manca} giorni — nascite previste dal {b['inizio']} al {b['fine']}."
+                f"Spugnata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                f"Le prime nascite (inizio buttata) sono previste tra {manca} giorni "
+                f"(dal {b['inizio']}). Poi la buttata può durare circa due settimane "
+                f"(fino al {b['fine']}), se l'umidità tiene."
             ),
         }
     b = buttate[-1]
