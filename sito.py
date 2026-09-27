@@ -29,6 +29,7 @@ app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
 ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
+INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": []}
@@ -160,7 +161,10 @@ def register():
         email = (request.form.get("email") or "").strip().lower()
         pw = (request.form.get("password") or "").strip()
         pw2 = (request.form.get("password2") or "").strip()
-        if "@" not in email or "." not in email.split("@")[-1]:
+        codice = (request.form.get("codice") or "").strip()
+        if codice != INVITE_CODE:
+            err = "Codice di invito non valido"
+        elif "@" not in email or "." not in email.split("@")[-1]:
             err = "Email non valida"
         elif len(pw) < 6:
             err = "Password almeno 6 caratteri"
