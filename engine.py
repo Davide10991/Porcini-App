@@ -4420,9 +4420,9 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
 def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
-    barra = st.progress(0, text="Precarico mappe MN…")
+    barra = st.progress(0, text=f"Preparazione {tot} zone…")
     try:
-        mn_preload_mappe(30)
+        mn_preload_mappe(10)
     except Exception:
         pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")

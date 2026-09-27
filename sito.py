@@ -8,6 +8,7 @@ import smtplib
 from datetime import datetime
 from email.mime.text import MIMEText
 from functools import wraps
+import threading
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -31,6 +32,7 @@ ADMIN_PASS = "Ciccione99"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": []}
+CALC_JOB = {"running": False, "result": None, "error": None, "lock": threading.Lock()}
 
 
 def _utenti():
@@ -272,16 +274,19 @@ def api_punto():
 @app.route("/api/calcola", methods=["POST"])
 @login_required
 def api_calcola():
+    """Avvia il calcolo in background così il progresso non resta bloccato su Avvio…"""
     body = request.get_json(force=True, silent=True) or {}
+    with CALC_JOB["lock"]:
+        if CALC_JOB["running"]:
+            return jsonify({"ok": False, "errore": "Calcolo già in corso, attendi…", "started": False})
+        CALC_JOB["running"] = True
+        CALC_JOB["result"] = None
+        CALC_JOB["error"] = None
+
     regioni = body.get("regioni") or sorted({p["regione"] for p in engine.PUNTI})
     tipi = body.get("tipi") or [
-        "faggio",
-        "castagno",
-        "quercia",
-        "leccio",
-        "misto_carpino_quercia",
-        "abete_bianco",
-        "abete_rosso",
+        "faggio", "castagno", "quercia", "leccio",
+        "misto_carpino_quercia", "abete_bianco", "abete_rosso",
     ]
     qmin = int(body.get("qmin") or 0)
     qmax = int(body.get("qmax") or 1800)
@@ -293,43 +298,68 @@ def api_calcola():
         "pioggia_max": int(body.get("pioggia_max") or 100),
     }
     punti = [
-        p
-        for p in engine.PUNTI
+        p for p in engine.PUNTI
         if p["regione"] in regioni
         and p["tipo"] in tipi
         and qmin <= p["quota"] <= qmax
         and (cerca in p["nome"].lower() if cerca else True)
     ]
-    engine.CALC_PROGRESS.update({"pct": 0, "text": f"Calcolo {len(punti)} zone…"})
-    ris = engine.calcola_tutti(
-        punti,
-        regole,
-        "",
-        max_km_stazione=5.0,
-        max_workers=3,
-        usa_wc=True,
-    )
+    engine.CALC_PROGRESS.update({"pct": 1, "text": f"Avvio calcolo di {len(punti)} zone…"})
 
-    def zona_radar(r):
-        fonte = str((r.get("meteo") or {}).get("fonte") or "").lower()
-        return bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte or "realtime" in fonte
+    def _lavoro():
+        try:
+            ris = engine.calcola_tutti(
+                punti, regole, "",
+                max_km_stazione=5.0,
+                max_workers=2,
+                usa_wc=True,
+            )
 
-    view = [
-        r
-        for r in ris
-        if (zona_radar(r) and f_radar) or ((not zona_radar(r)) and f_staz)
-    ]
-    view_j = [_jsonable(r) for r in view]
-    _salva_cache(view_j)
-    engine.CALC_PROGRESS.update({"pct": 100, "text": "Fatto"})
-    return jsonify(
-        {
-            "n": len(view),
-            "n_alto": sum(1 for r in view if r.get("score", 0) >= 70),
-            "n_medio": sum(1 for r in view if 50 <= r.get("score", 0) < 70),
-            "zone": view_j,
-        }
-    )
+            def zona_radar(r):
+                fonte = str((r.get("meteo") or {}).get("fonte") or "").lower()
+                return bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte or "realtime" in fonte
+
+            view = [
+                r for r in ris
+                if (zona_radar(r) and f_radar) or ((not zona_radar(r)) and f_staz)
+            ]
+            view_j = [_jsonable(r) for r in view]
+            _salva_cache(view_j)
+            engine.CALC_PROGRESS.update({"pct": 100, "text": "Fatto"})
+            CALC_JOB["result"] = {
+                "ok": True,
+                "n": len(view),
+                "n_alto": sum(1 for r in view if r.get("score", 0) >= 70),
+                "n_medio": sum(1 for r in view if 50 <= r.get("score", 0) < 70),
+                "zone": view_j,
+            }
+        except Exception as e:
+            CALC_JOB["error"] = str(e)
+            engine.CALC_PROGRESS.update({"pct": 0, "text": f"Errore: {e}"})
+            CALC_JOB["result"] = {"ok": False, "errore": str(e), "zone": []}
+        finally:
+            with CALC_JOB["lock"]:
+                CALC_JOB["running"] = False
+
+    threading.Thread(target=_lavoro, daemon=True).start()
+    return jsonify({"ok": True, "started": True, "n_punti": len(punti)})
+
+
+@app.route("/api/calcola/stato")
+@login_required
+def api_calcola_stato():
+    """Stato del calcolo in background + progresso."""
+    running = bool(CALC_JOB.get("running"))
+    prog = dict(engine.CALC_PROGRESS or {})
+    if running:
+        return jsonify({"done": False, "running": True, "pct": prog.get("pct") or 0, "text": prog.get("text") or ""})
+    result = CALC_JOB.get("result")
+    if result is not None:
+        out = dict(result)
+        out["done"] = True
+        out["running"] = False
+        return jsonify(out)
+    return jsonify({"done": False, "running": False, "pct": prog.get("pct") or 0, "text": prog.get("text") or "Nessun calcolo"})
 
 
 @app.route("/api/ultimo")
