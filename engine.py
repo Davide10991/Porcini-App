@@ -3708,8 +3708,9 @@ def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
         # quercia, leccio, misto_carpino_quercia, …
         g = 9
     tm = float(t_max_media or 20)
+    # caldo: -1 giorno al massimo, restiamo nella fascia 8–10 / 12–14
     if tm >= 28:
-        g = max(7, g - 2)
+        g = max(8, g - 1)
     elif tm >= 25:
         g = max(8, g - 1)
     elif tm <= 16:
@@ -3846,19 +3847,21 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             attesa = max(7, attesa - 3)
         elif terreno_umido:
             attesa = max(8, attesa - 1)
+        # La buttata inizia alle *nascite* (inizio), non al giorno della spugnata.
         inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
-        dopo = d[d["date"] >= pd.Timestamp(data_evt)]
+        # Asciutto prolungato *dopo* le nascite può chiudere un po' prima;
+        # NON si usa la data della spugnata (prima tagliava a pioggia+12gg e
+        # risultava "finita" dopo 4–5 giorni di nascite).
+        dopo_nascite = d[d["date"] >= inizio.normalize()]
         ultima_umida = None
-        if len(dopo):
-            umide = dopo[dopo["precip"] >= 4]
+        if len(dopo_nascite):
+            umide = dopo_nascite[pd.to_numeric(dopo_nascite["precip"], errors="coerce").fillna(0) >= 3]
             if len(umide):
                 ultima_umida = pd.to_datetime(umide["date"].max()).normalize()
         if ultima_umida is not None and int((oggi - ultima_umida).days) >= 12:
             fine = min(fine, ultima_umida + pd.Timedelta(days=12))
         attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
-        if ultima_umida is not None and (oggi - ultima_umida).days >= 12:
-            attiva = False
         incrocio = False
         if out:
             p = out[-1]
