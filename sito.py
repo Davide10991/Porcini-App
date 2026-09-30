@@ -270,10 +270,17 @@ def api_zone():
     q = (request.args.get("q") or "").strip().lower()
     out = []
     for p in engine.PUNTI:
-        if q and q not in p["nome"].lower():
+        if q and q not in (p.get("nome") or "").lower() and q not in (p.get("regione") or "").lower():
             continue
-        out.append(p["nome"])
-        if len(out) >= 20:
+        out.append({
+            "nome": p.get("nome"),
+            "lat": p.get("lat"),
+            "lon": p.get("lon"),
+            "regione": p.get("regione"),
+            "quota": p.get("quota"),
+            "tipo": p.get("tipo"),
+        })
+        if len(out) >= 25:
             break
     return jsonify(out)
 
