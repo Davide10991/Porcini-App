@@ -33,7 +33,7 @@ INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
-CALC_JOB = {"running": False, "result": None, "error": None, "lock": threading.Lock()}
+CALC_JOB = {"running": False, "result": None, "error": None, "started_at": None, "lock": threading.Lock()}
 
 
 def _utenti():
@@ -288,17 +288,43 @@ def api_punto():
     return jsonify({"ok": True, "zona": r})
 
 
+@app.route("/api/calcola/reset", methods=["POST"])
+@login_required
+def api_calcola_reset():
+    """Sblocca un calcolo rimasto appeso (running=True senza thread attivo)."""
+    with CALC_JOB["lock"]:
+        CALC_JOB["running"] = False
+        CALC_JOB["started_at"] = None
+        CALC_JOB["error"] = None
+    engine.CALC_PROGRESS.update({"pct": 0, "text": "Pronto"})
+    return jsonify({"ok": True, "text": "Calcolo sbloccato"})
+
+
 @app.route("/api/calcola", methods=["POST"])
 @login_required
 def api_calcola():
     """Avvia il calcolo in background così il progresso non resta bloccato su Avvio…"""
     body = request.get_json(force=True, silent=True) or {}
+    forza = bool(body.get("forza") or body.get("force"))
     with CALC_JOB["lock"]:
-        if CALC_JOB["running"]:
-            return jsonify({"ok": False, "errore": "Calcolo già in corso, attendi…", "started": False})
+        # sblocca se appeso da più di 3 minuti senza progresso, o se forza=True
+        appeso = False
+        if CALC_JOB["running"] and CALC_JOB.get("started_at"):
+            try:
+                eta = (datetime.now() - datetime.fromisoformat(CALC_JOB["started_at"])).total_seconds()
+                pct = float((engine.CALC_PROGRESS or {}).get("pct") or 0)
+                if eta > 180 and pct < 2:
+                    appeso = True
+                if eta > 3600:
+                    appeso = True
+            except Exception:
+                appeso = True
+        if CALC_JOB["running"] and not forza and not appeso:
+            return jsonify({"ok": False, "errore": "Calcolo già in corso, attendi…", "started": False, "bloccato": True})
         CALC_JOB["running"] = True
         CALC_JOB["result"] = None
         CALC_JOB["error"] = None
+        CALC_JOB["started_at"] = datetime.now().isoformat(timespec="seconds")
 
     regioni = body.get("regioni") or sorted({p["regione"] for p in engine.PUNTI})
     tipi = body.get("tipi") or [
@@ -355,6 +381,7 @@ def api_calcola():
         finally:
             with CALC_JOB["lock"]:
                 CALC_JOB["running"] = False
+                CALC_JOB["started_at"] = None
 
     threading.Thread(target=_lavoro, daemon=True).start()
     return jsonify({"ok": True, "started": True, "n_punti": len(punti)})

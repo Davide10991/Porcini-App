@@ -947,8 +947,29 @@ def _mn_rgb_to_scala(rgb, palette, neutro=True):
 def _mn_rgb_to_mm(rgb):
     if _mn_e_mare_o_bordo(rgb) or _mn_e_terra_asciutta(rgb):
         return 0.0
-    v = _mn_rgb_to_scala(rgb, MN_PREC_PALETTE, neutro=False)
-    return 0.0 if v is None else v
+    r, g, b = rgb[:3]
+    # legenda / rosso puro / UI: non è pioggia sulla mappa
+    if r > 100 and g < 40 and b < 40:
+        return 0.0
+    if r > 180 and g < 60 and b < 60 and abs(g - b) < 25:
+        return 0.0
+    # match stretto sulla palette
+    best, bd = None, 1e9
+    for (pr, pg, pb), val in MN_PREC_PALETTE:
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if d < bd:
+            bd, best = d, val
+    # soglia più stretta; per mm alti serve match ancora migliore
+    if best is None:
+        return 0.0
+    if best >= 100 and bd > 900:
+        return 0.0
+    if best >= 40 and bd > 1600:
+        return 0.0
+    if bd > 2200:
+        return 0.0
+    # tetto giornaliero realistico da mappa interpolata
+    return float(min(80.0, best))
 
 
 def _mn_get_px(buf, w, h, x, y):
@@ -988,10 +1009,9 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     return v
             return None
 
-        # PRECIP — stessa logica per TUTTE le zone (Pescasseroli = Roccaraso = Lazio…):
-        # massimo mm tra i pixel terra in un raggio crescente intorno al bosco.
-        # Se a Pescasseroli la mappa ha pioggia, la leggiamo; se un pixel è “cieco”
-        # ma a 2–5 km c’è il colore della pioggia, prendiamo quello.
+        # PRECIP — stessa logica per tutte le zone.
+        # ~1.2 km/pixel → raggio 12 px ≈ 15 km, 18 px ≈ 22 km (max).
+        # Non oltre: altrimenti si “rubano” mm di altre valli (dati buggati).
         def _max_raggio(rad):
             valori = []
             r2 = rad * rad
@@ -1004,21 +1024,25 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     rgb = _mn_get_px(buf, w, h, x, y)
                     if _mn_e_mare_o_bordo(rgb):
                         continue
-                    # non scartare subito il beige: prova comunque il decoder
+                    if _mn_e_terra_asciutta(rgb):
+                        continue
                     v = decoder(rgb)
                     if v is None:
                         continue
                     fv = float(v)
-                    if fv >= 2.0:
-                        valori.append(fv)
-            return max(valori) if valori else 0.0
+                    if fv >= 2.5:
+                        valori.append(min(80.0, fv))
+            if not valori:
+                return 0.0
+            valori.sort()
+            # evita un singolo pixel legenda/outlier: prendi ~90° percentile
+            i = max(0, int(len(valori) * 0.9) - 1)
+            return valori[i]
 
-        # ~3–4 km a zoom mappa Italia, poi allarga se ancora secco
-        for rad in (20, 35, 50, 70):
-            mx = _max_raggio(rad)
-            if mx >= 2.0:
-                return mx
-        return 0.0
+        mx = _max_raggio(12)
+        if mx < 2.5:
+            mx = _max_raggio(18)
+        return mx
     except Exception:
         return None
 
@@ -1257,13 +1281,17 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
         # serie "1.0 mm tutti i giorni" = pixel sbagliato (sfondo/legenda)
         if len(vals) >= 8:
+            # valori estremi da legenda (80–250 ripetuti) = bug lettura
+            vals = vals.where(vals < 90.0, 0.0)
             vc = vals[vals > 0].value_counts()
             if len(vc):
                 top, ntop = float(vc.index[0]), int(vc.iloc[0])
                 if top <= 2.0 and ntop >= max(5, int(0.35 * len(vals))):
                     vals = vals.where(vals != top, 0.0)
-                # quasi tutti i giorni stesso valore basso-medio sospetto
                 if top <= 5.0 and ntop / max(1, len(vals)) >= 0.55:
+                    vals = vals.where(vals != top, 0.0)
+                # stesso valore alto molti giorni (es. 250 o 80) = artefatto
+                if top >= 40.0 and ntop >= 4:
                     vals = vals.where(vals != top, 0.0)
             df = df.copy()
             df["precip"] = vals.values
