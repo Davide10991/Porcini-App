@@ -4283,10 +4283,17 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         punteggio_totale = min(punteggio_totale, 48)
         dettaglio["consiglio"] = consiglio
     # Poca acqua nel mese: non può essere una buttata "ALTA"
-    if precip_totale < 25:
+    if precip_totale < 25 and not attive:
         punteggio_totale = min(punteggio_totale, 42)
         consiglio = f"Poca pioggia in 30g ({precip_totale:.0f} mm) · " + consiglio
         dettaglio["consiglio"] = consiglio
+
+    # Colore mappa allineato alla fase: buttata aperta = verde
+    fase = (sb.get("fase") or "").upper()
+    if fase in ("IN CORSO", "INCROCIO") or attive:
+        punteggio_totale = max(float(punteggio_totale), 75.0)
+    elif fase == "IN ATTESA":
+        punteggio_totale = max(float(punteggio_totale), 55.0)
 
     if punteggio_totale >= 70:
         livello = "🟢 ALTO - condizioni molto buone"
