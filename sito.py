@@ -33,7 +33,34 @@ INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
-CALC_JOB = {"running": False, "result": None, "error": None, "started_at": None, "lock": threading.Lock()}
+CALC_JOBS = {}  # sid -> {running, result, error, started_at}
+_JOBS_LOCK = threading.Lock()
+
+
+def _sid():
+    """Id sessione stabile per non far bloccare un utente dall'altro."""
+    try:
+        from flask import session as _s
+        if not _s.get("_jid"):
+            import uuid
+            _s["_jid"] = uuid.uuid4().hex
+        return str(_s.get("_jid") or _s.get("email") or "anon")
+    except Exception:
+        return "anon"
+
+
+def _job(sid=None):
+    sid = sid or _sid()
+    with _JOBS_LOCK:
+        if sid not in CALC_JOBS:
+            CALC_JOBS[sid] = {
+                "running": False,
+                "result": None,
+                "error": None,
+                "started_at": None,
+            }
+        return CALC_JOBS[sid]
+
 
 
 def _utenti():
@@ -291,11 +318,11 @@ def api_punto():
 @app.route("/api/calcola/reset", methods=["POST"])
 @login_required
 def api_calcola_reset():
-    """Sblocca un calcolo rimasto appeso (running=True senza thread attivo)."""
-    with CALC_JOB["lock"]:
-        CALC_JOB["running"] = False
-        CALC_JOB["started_at"] = None
-        CALC_JOB["error"] = None
+    """Sblocca solo il calcolo di QUESTA sessione (non tocca gli altri utenti)."""
+    j = _job()
+    j["running"] = False
+    j["started_at"] = None
+    j["error"] = None
     engine.CALC_PROGRESS.update({"pct": 0, "text": "Pronto"})
     return jsonify({"ok": True, "text": "Calcolo sbloccato"})
 
@@ -303,28 +330,16 @@ def api_calcola_reset():
 @app.route("/api/calcola", methods=["POST"])
 @login_required
 def api_calcola():
-    """Avvia il calcolo in background così il progresso non resta bloccato su Avvio…"""
+    """Calcolo in background *per sessione*: due utenti possono calcolare insieme."""
     body = request.get_json(force=True, silent=True) or {}
-    forza = bool(body.get("forza") or body.get("force"))
-    with CALC_JOB["lock"]:
-        # sblocca se appeso da più di 3 minuti senza progresso, o se forza=True
-        appeso = False
-        if CALC_JOB["running"] and CALC_JOB.get("started_at"):
-            try:
-                eta = (datetime.now() - datetime.fromisoformat(CALC_JOB["started_at"])).total_seconds()
-                pct = float((engine.CALC_PROGRESS or {}).get("pct") or 0)
-                if eta > 180 and pct < 2:
-                    appeso = True
-                if eta > 3600:
-                    appeso = True
-            except Exception:
-                appeso = True
-        if CALC_JOB["running"] and not forza and not appeso:
-            return jsonify({"ok": False, "errore": "Calcolo già in corso, attendi…", "started": False, "bloccato": True})
-        CALC_JOB["running"] = True
-        CALC_JOB["result"] = None
-        CALC_JOB["error"] = None
-        CALC_JOB["started_at"] = datetime.now().isoformat(timespec="seconds")
+    # Ogni click = nuovo calcolo: interrompe quello precedente della stessa sessione
+    j = _job()
+    j["running"] = True
+    j["result"] = None
+    j["error"] = None
+    j["started_at"] = datetime.now().isoformat(timespec="seconds")
+    j["token"] = (j.get("token") or 0) + 1
+    mio_token = j["token"]
 
     regioni = body.get("regioni") or sorted({p["regione"] for p in engine.PUNTI})
     tipi = body.get("tipi") or [
@@ -334,8 +349,6 @@ def api_calcola():
     qmin = int(body.get("qmin") or 0)
     qmax = int(body.get("qmax") or 1800)
     cerca = (body.get("cerca") or "").strip().lower()
-    f_staz = True  # sempre tutte le fonti
-    f_radar = True
     regole = {
         "pioggia_min": int(body.get("pioggia_min") or 40),
         "pioggia_max": int(body.get("pioggia_max") or 100),
@@ -348,8 +361,10 @@ def api_calcola():
         and (cerca in p["nome"].lower() if cerca else True)
     ]
     engine.CALC_PROGRESS.update({"pct": 1, "text": f"Avvio calcolo di {len(punti)} zone…"})
+    sid = _sid()
 
     def _lavoro():
+        job = _job(sid)
         try:
             ris = engine.calcola_tutti(
                 punti, regole, "",
@@ -357,16 +372,14 @@ def api_calcola():
                 max_workers=2,
                 usa_wc=True,
             )
-
-            def zona_radar(r):
-                fonte = str((r.get("meteo") or {}).get("fonte") or "").lower()
-                return bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte or "realtime" in fonte
-
-            view = list(ris)  # tutte le zone, senza filtro fonte
+            # se nel frattempo l'utente ha rilanciato, scarta questo risultato
+            if job.get("token") != mio_token:
+                return
+            view = list(ris)
             view_j = [_jsonable(r) for r in view]
             _salva_cache(view_j)
             engine.CALC_PROGRESS.update({"pct": 100, "text": "Fatto"})
-            CALC_JOB["result"] = {
+            job["result"] = {
                 "ok": True,
                 "aggiornato": CACHE.get("aggiornato"),
                 "n": len(view),
@@ -375,13 +388,15 @@ def api_calcola():
                 "zone": view_j,
             }
         except Exception as e:
-            CALC_JOB["error"] = str(e)
+            if job.get("token") != mio_token:
+                return
+            job["error"] = str(e)
             engine.CALC_PROGRESS.update({"pct": 0, "text": f"Errore: {e}"})
-            CALC_JOB["result"] = {"ok": False, "errore": str(e), "zone": []}
+            job["result"] = {"ok": False, "errore": str(e), "zone": []}
         finally:
-            with CALC_JOB["lock"]:
-                CALC_JOB["running"] = False
-                CALC_JOB["started_at"] = None
+            if job.get("token") == mio_token:
+                job["running"] = False
+                job["started_at"] = None
 
     threading.Thread(target=_lavoro, daemon=True).start()
     return jsonify({"ok": True, "started": True, "n_punti": len(punti)})
@@ -390,21 +405,32 @@ def api_calcola():
 @app.route("/api/calcola/stato")
 @login_required
 def api_calcola_stato():
-    """Stato del calcolo in background + progresso."""
-    running = bool(CALC_JOB.get("running"))
+    j = _job()
+    running = bool(j.get("running"))
     prog = dict(engine.CALC_PROGRESS or {})
     if running:
-        return jsonify({"done": False, "running": True, "pct": prog.get("pct") or 0, "text": prog.get("text") or ""})
-    result = CALC_JOB.get("result")
+        return jsonify({
+            "done": False,
+            "running": True,
+            "pct": prog.get("pct") or 0,
+            "text": prog.get("text") or "",
+        })
+    result = j.get("result")
     if result is not None:
         out = dict(result)
         out["done"] = True
         out["running"] = False
         return jsonify(out)
-    return jsonify({"done": False, "running": False, "pct": prog.get("pct") or 0, "text": prog.get("text") or "Nessun calcolo"})
+    return jsonify({
+        "done": False,
+        "running": False,
+        "pct": prog.get("pct") or 0,
+        "text": prog.get("text") or "Nessun calcolo",
+    })
 
 
 @app.route("/api/ultimo")
+
 @login_required
 def api_ultimo():
     _carica_cache()
