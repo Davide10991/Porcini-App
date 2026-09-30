@@ -1040,14 +1040,21 @@ def _mn_mappa_px(giorno, variabile="prec"):
     )
     try:
         r = None
-        for _t in range(2):
+        for _t in range(3):
             try:
-                r = requests.get(url, timeout=4, headers={"User-Agent": "Mozilla/5.0"})
+                r = requests.get(
+                    url,
+                    timeout=12,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; BoletusMap/1.0)",
+                        "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+                    },
+                )
                 if r.status_code == 200 and len(r.content) >= 10000:
                     break
             except Exception:
                 r = None
-                time.sleep(0.2)
+                time.sleep(0.5)
         if r is None or r.status_code != 200 or len(r.content) < 10000:
             return None
         from PIL import Image
@@ -3434,6 +3441,14 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             ("roccaraso", "roccaraso"), ("agnone", "agnone"),
             ("sangro", "castel-di-sangro"), ("matese", "piedimonte-matese"),
             ("ovindoli", "ovindoli"), ("scanno", "scanno"),
+            ("campo imperatore", "campo-imperatore"), ("assergi", "assergi"),
+            ("pietracamela", "pietracamela"), ("prati di tivo", "prati-di-tivo"),
+            ("passolanciano", "passolanciano"), ("maielletta", "maielletta"),
+            ("blockhaus", "blockhaus"), ("guado", "guado-di-coccia"),
+            ("coccia", "guado-di-coccia"), ("pizzoferrato", "pizzoferrato"),
+            ("gamberale", "gamberale"), ("palena", "palena"),
+            ("parco", "pescasseroli"), ("gran sasso", "campo-imperatore"),
+            ("majella", "maielletta"), ("sirente", "ovindoli"),
         ]:
             if token in nome_z:
                 candidati_slug.append(slug)
@@ -3473,12 +3488,26 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     candidati = [c for c in candidati if c.get("score", -1) >= 0 and c.get("df") is not None]
     candidati.sort(key=lambda x: -x["score"])
 
+    # Riepilogo reti confrontate (WU / WC / MN / CF / FM)
+    confronto_reti = []
+    for c in candidati[:8]:
+        try:
+            inf = c.get("info") or {}
+            confronto_reti.append(
+                f"{inf.get('fonte', '?')}: {inf.get('pioggia_stazione_30g', '?')} mm"
+                + (f" ({inf.get('distanza_km')} km)" if inf.get("distanza_km") is not None else "")
+            )
+        except Exception:
+            pass
+
     df = None
     info = None
     if candidati:
         best = candidati[0]
         df = best["df"]
         info = best["info"]
+        if info is not None and confronto_reti:
+            info["confronto_reti"] = confronto_reti
         # se la mappa MN smentisce la stazione, scarta e prova la successiva
         try:
             sm = _mappa_smentisce_stazione(df, lat, lon)

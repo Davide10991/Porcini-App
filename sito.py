@@ -32,7 +32,7 @@ ADMIN_PASS = "Ciccione99"
 INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
-CACHE = {"risultati": []}
+CACHE = {"risultati": [], "aggiornato": None}
 CALC_JOB = {"running": False, "result": None, "error": None, "lock": threading.Lock()}
 
 
@@ -86,19 +86,32 @@ def _invia_registrazione(dest):
 
 
 def _carica_cache():
-    if CACHE["risultati"]:
+    if CACHE.get("risultati"):
         return
     if CACHE_FILE.exists():
         try:
-            CACHE["risultati"] = json.loads(CACHE_FILE.read_text())
+            data = json.loads(CACHE_FILE.read_text())
+            if isinstance(data, dict) and "zone" in data:
+                CACHE["risultati"] = data.get("zone") or []
+                CACHE["aggiornato"] = data.get("aggiornato")
+            elif isinstance(data, list):
+                CACHE["risultati"] = data
+                try:
+                    CACHE["aggiornato"] = datetime.fromtimestamp(CACHE_FILE.stat().st_mtime).isoformat(timespec="seconds")
+                except Exception:
+                    CACHE["aggiornato"] = None
+            else:
+                CACHE["risultati"] = []
         except Exception:
             CACHE["risultati"] = []
 
 
 def _salva_cache(rows):
     CACHE["risultati"] = rows
+    CACHE["aggiornato"] = datetime.now().isoformat(timespec="seconds")
     try:
-        CACHE_FILE.write_text(json.dumps(rows, ensure_ascii=False))
+        payload = {"aggiornato": CACHE["aggiornato"], "zone": rows}
+        CACHE_FILE.write_text(json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass
 
@@ -295,8 +308,8 @@ def api_calcola():
     qmin = int(body.get("qmin") or 0)
     qmax = int(body.get("qmax") or 1800)
     cerca = (body.get("cerca") or "").strip().lower()
-    f_staz = bool(body.get("stazioni", True))
-    f_radar = bool(body.get("radar", True))
+    f_staz = True  # sempre tutte le fonti
+    f_radar = True
     regole = {
         "pioggia_min": int(body.get("pioggia_min") or 40),
         "pioggia_max": int(body.get("pioggia_max") or 100),
@@ -323,15 +336,13 @@ def api_calcola():
                 fonte = str((r.get("meteo") or {}).get("fonte") or "").lower()
                 return bool((r.get("meteo") or {}).get("stima_mappa")) or "mappe" in fonte or "realtime" in fonte
 
-            view = [
-                r for r in ris
-                if (zona_radar(r) and f_radar) or ((not zona_radar(r)) and f_staz)
-            ]
+            view = list(ris)  # tutte le zone, senza filtro fonte
             view_j = [_jsonable(r) for r in view]
             _salva_cache(view_j)
             engine.CALC_PROGRESS.update({"pct": 100, "text": "Fatto"})
             CALC_JOB["result"] = {
                 "ok": True,
+                "aggiornato": CACHE.get("aggiornato"),
                 "n": len(view),
                 "n_alto": sum(1 for r in view if r.get("score", 0) >= 70),
                 "n_medio": sum(1 for r in view if 50 <= r.get("score", 0) < 70),
@@ -377,6 +388,7 @@ def api_ultimo():
             "n_alto": sum(1 for r in view if float(r.get("score") or 0) >= 70),
             "n_medio": sum(1 for r in view if 50 <= float(r.get("score") or 0) < 70),
             "zone": view,
+            "aggiornato": CACHE.get("aggiornato"),
         }
     )
 
