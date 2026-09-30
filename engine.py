@@ -1976,8 +1976,12 @@ def get_stazione_dati(station_id, days=30):
     return out
 
 
-def riepilogo_vento(df, giorni=10):
-    """Vento persistente secca il letto: fattore 1 = ok, verso 0 = nascite azzerate."""
+def riepilogo_vento(df, giorni=10, dopo_data=None):
+    """Vento *dopo* la pioggia utile: asciuga il letto e accorcia la buttata.
+
+    Il vento *prima* della spugnata non conta sul fattore (non c'era ancora
+    umidità da difendere). `dopo_data` = giorno della pioggia utile (incluso).
+    """
     vuoto = {
         "vento_medio_10g": None,
         "vento_max_10g": None,
@@ -1992,7 +1996,22 @@ def riepilogo_vento(df, giorni=10):
     }
     if df is None or "vento_max" not in getattr(df, "columns", []):
         return vuoto
-    coda = df.tail(giorni).copy()
+    serie = df.copy()
+    try:
+        serie["date"] = pd.to_datetime(serie["date"], errors="coerce")
+        serie = serie.dropna(subset=["date"]).sort_values("date")
+    except Exception:
+        pass
+    if dopo_data is not None:
+        try:
+            da = pd.Timestamp(dopo_data).normalize()
+            serie = serie[serie["date"] >= da]
+        except Exception:
+            pass
+    if len(serie) == 0:
+        vuoto["nota_vento"] = "Vento dopo la pioggia: n/d"
+        return vuoto
+    coda = serie.tail(giorni).copy()
     v = pd.to_numeric(coda["vento_max"], errors="coerce").fillna(0)
     if v.isna().all() or float(v.max()) == 0 and float(v.mean()) == 0:
         # potrebbe essere tutto zero vero, trattiamo comunque
@@ -2017,13 +2036,13 @@ def riepilogo_vento(df, giorni=10):
     if giorni_30 >= 4 and streak >= 3:
         fattore = min(fattore, 0.12)
     if fattore >= 0.85:
-        nota = "Vento debole, umidità del suolo tenuta"
+        nota = "Vento debole dopo la pioggia: umidità del suolo tenuta"
     elif fattore >= 0.5:
-        nota = "Vento fresco persistente: il letto si sta asciugando"
+        nota = "Vento fresco dopo la spugnata: il letto si sta asciugando"
     elif fattore >= 0.2:
-        nota = "Vento forte e ripetuto: nascite fortemente ridotte"
+        nota = "Vento forte dopo la pioggia: nascite fortemente ridotte"
     else:
-        nota = "Vento persistente >20–30 km/h: umidità quasi azzerata"
+        nota = "Vento persistente dopo la pioggia (>20–30 km/h): umidità quasi azzerata"
     picchi = []
     picco_data = None
     picco_kmh = None
@@ -3914,9 +3933,14 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             durata = round(durata * 0.90)
         elif t_max_media >= 24:
             durata = round(durata * 0.95)
-        if fattore_v < 0.45:
+        # vento solo DOPO questa spugnata (prima non conta)
+        try:
+            fv_evt = float(riepilogo_vento(d, giorni=20, dopo_data=data_evt).get("fattore_vento") or 1.0)
+        except Exception:
+            fv_evt = float(fattore_v or 1.0)
+        if fv_evt < 0.45:
             durata = round(durata * 0.65)
-        elif fattore_v < 0.7:
+        elif fv_evt < 0.7:
             durata = round(durata * 0.82)
         if soil is not None:
             try:
@@ -4221,12 +4245,41 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     specie = specie_porcini(tipo_bosco, quota, t_max_media)
     giorni_attesa = giorni_attesa_bosco(tipo_bosco, t_max_media)
 
-    vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
-    fattore_v = float(vento.get("fattore_vento") or 1.0)
+    # prima le buttate (serve la data pioggia); il vento che conta è quello DOPO
+    vento0 = vento or riepilogo_vento(df if df is not None and "vento_max" in getattr(df, "columns", []) else None)
+    fattore_v = float(vento0.get("fattore_vento") or 1.0)
     buttate = trova_buttate(
         df, giorni_attesa, t_max_media, fattore_v,
         tipo_bosco=tipo_bosco, quota=quota, soil=soil,
     )
+    # ricalcola vento/fattore solo dal giorno della spugnata più rilevante in poi
+    dopo_pioggia = None
+    if buttate:
+        try:
+            # ultima spugnata (o quella ancora attiva)
+            att = [b for b in buttate if b.get("attiva")]
+            dopo_pioggia = (att[-1] if att else buttate[-1]).get("data_pioggia")
+        except Exception:
+            dopo_pioggia = buttate[-1].get("data_pioggia")
+    vento = riepilogo_vento(
+        df if df is not None and "vento_max" in getattr(df, "columns", []) else None,
+        giorni=20,
+        dopo_data=dopo_pioggia,
+    )
+    # se non c'è serie dopo la pioggia, tieni info generali ma fattore neutro
+    if dopo_pioggia and vento.get("vento_max_10g") is None:
+        vento = dict(vento0)
+        vento["fattore_vento"] = 1.0
+        vento["nota_vento"] = "Vento dopo la pioggia: n/d (non penalizzato)"
+    elif dopo_pioggia:
+        pass
+    else:
+        # nessuna spugnata: il vento pre-pioggia non deve abbassare lo score
+        vento = dict(vento0)
+        vento["fattore_vento"] = 1.0
+        if vento0.get("nota_vento"):
+            vento["nota_vento"] = "Vento prima di una spugnata: non penalizza la buttata"
+    fattore_v = float(vento.get("fattore_vento") or 1.0)
     attive = [b for b in buttate if b.get("attiva")]
     giorni_dalla_pioggia = 99
     if buttate:
