@@ -1281,7 +1281,7 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         # serie "1.0 mm tutti i giorni" = pixel sbagliato (sfondo/legenda)
         if len(vals) >= 8:
             # valori estremi da legenda (80–250 ripetuti) = bug lettura
-            vals = vals.where(vals < 90.0, 0.0)
+            vals = vals.where(vals < 80.0, 0.0)
             vc = vals[vals > 0].value_counts()
             if len(vc):
                 top, ntop = float(vc.index[0]), int(vc.iloc[0])
@@ -3046,6 +3046,34 @@ def _pluvio_morto(df):
     return False
 
 
+
+def _sanifica_precip_df(df):
+    """Corregge serie buggate: cumulativi letti come giornalieri, outlier assurdì (>150 mm/g)."""
+    if df is None or len(df) == 0 or "precip" not in getattr(df, "columns", []):
+        return df
+    d = df.copy()
+    d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0.0)
+    d.loc[d["precip"] < 0, "precip"] = 0.0
+    try:
+        d = d.sort_values("date")
+    except Exception:
+        pass
+    p = d["precip"].astype(float).values
+    if len(p) >= 6:
+        # serie quasi sempre crescente e totale alto → probabilmente cumulativo
+        diffs = p[1:] - p[:-1]
+        non_decresc = int((diffs >= -1.0).sum())
+        if non_decresc >= max(4, int(0.75 * len(diffs))) and float(p[-1]) >= float(p[0]) + 30:
+            daily = [max(0.0, float(p[0]))]
+            for i in range(1, len(p)):
+                daily.append(max(0.0, float(p[i] - p[i - 1])))
+            d["precip"] = daily
+            p = d["precip"].astype(float).values
+    # tetto giornaliero realistico (sensori/unità sbagliate o cumulativi restanti)
+    d["precip"] = d["precip"].clip(lower=0.0, upper=120.0)
+    return d
+
+
 def _mappa_smentisce_stazione(df, lat, lon):
     """Scarta la stazione solo se la mappa MN sul bosco ha pioggia *credibile*
     e contraddice il pluviometro.
@@ -3290,6 +3318,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     def _score_df(df, dist_km):
         if df is None or len(df) < 5 or "precip" not in df.columns:
             return -1
+        df = _sanifica_precip_df(df)
         if _pluvio_morto(df):
             return -1
         p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
@@ -3666,6 +3695,22 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         }
 
     if df is not None and len(df) and "precip" in df.columns:
+        df = _sanifica_precip_df(df)
+        try:
+            tot = round(float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum()), 1)
+            if info is not None:
+                info["pioggia_stazione_30g"] = tot
+                gg = []
+                tmp = df.copy()
+                tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+                for _, row in tmp[tmp["_p"] >= 0.2].sort_values("date").iterrows():
+                    mm = float(row["_p"])
+                    if mm > 150:
+                        continue
+                    gg.append(f"{str(row.get('date'))[:10]}: {mm:.1f} mm")
+                info["giorni_pluviometro"] = gg[-20:]
+        except Exception:
+            pass
         vento = riepilogo_vento(df)
     return df, info, forecast, soil, vento
 
