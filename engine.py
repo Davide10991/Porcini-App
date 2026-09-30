@@ -1009,11 +1009,10 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     return v
             return None
 
-        # PRECIP — stessa logica per tutte le zone.
-        # ~1.2 km/pixel → raggio 12 px ≈ 15 km, 18 px ≈ 22 km (max).
-        # Non oltre: altrimenti si “rubano” mm di altre valli (dati buggati).
-        def _max_raggio(rad):
-            valori = []
+        # PRECIP: solo sul punto (e 1–2 px intorno ≈ <3 km).
+        # Non si legge a 15–20 km: ogni località ha il suo pixel.
+        def _valori_raggio(rad):
+            out = []
             r2 = rad * rad
             for dy in range(-rad, rad + 1):
                 for dx in range(-rad, rad + 1):
@@ -1031,18 +1030,18 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                         continue
                     fv = float(v)
                     if fv >= 2.5:
-                        valori.append(min(80.0, fv))
-            if not valori:
-                return 0.0
-            valori.sort()
-            # evita un singolo pixel legenda/outlier: prendi ~90° percentile
-            i = max(0, int(len(valori) * 0.9) - 1)
-            return valori[i]
+                        out.append(min(80.0, fv))
+            return out
 
-        mx = _max_raggio(12)
-        if mx < 2.5:
-            mx = _max_raggio(18)
-        return mx
+        # prima il pixel esatto + vicini immediati (anti-alias mappa)
+        vals = _valori_raggio(2)
+        if not vals:
+            vals = _valori_raggio(4)  # ~5 km solo se il punto è su pixel vuoto
+        if not vals:
+            return 0.0
+        # mediana dei pixel sul punto (non il max lontano)
+        vals.sort()
+        return vals[len(vals) // 2]
     except Exception:
         return None
 
