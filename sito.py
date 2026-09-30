@@ -255,12 +255,24 @@ def logout():
 @app.route("/")
 @login_required
 def home():
+    boschi = [
+        {
+            "nome": p.get("nome"),
+            "lat": p.get("lat"),
+            "lon": p.get("lon"),
+            "regione": p.get("regione"),
+            "quota": p.get("quota"),
+            "tipo": p.get("tipo"),
+        }
+        for p in engine.PUNTI
+    ]
     return render_template(
         "index.html",
         n_punti=len(engine.PUNTI),
         regioni=sorted({p["regione"] for p in engine.PUNTI}),
         ruolo=session.get("ruolo", "guest"),
         email=session.get("email", ""),
+        boschi_json=boschi,
     )
 
 
