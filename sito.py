@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import os
 import smtplib
-from datetime import datetime
+from datetime import datetime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 from email.mime.text import MIMEText
 from functools import wraps
 import threading
@@ -33,6 +37,17 @@ INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
+
+
+def _ora_roma():
+    """Ora italiana (Europe/Rome), non UTC del server."""
+    try:
+        if ZoneInfo is not None:
+            return datetime.now(ZoneInfo("Europe/Rome"))
+    except Exception:
+        pass
+    return datetime.utcnow() + timedelta(hours=2)
+
 CALC_JOBS = {}  # sid -> {running, result, error, started_at}
 _JOBS_LOCK = threading.Lock()
 
@@ -124,7 +139,7 @@ def _carica_cache():
             elif isinstance(data, list):
                 CACHE["risultati"] = data
                 try:
-                    CACHE["aggiornato"] = datetime.fromtimestamp(CACHE_FILE.stat().st_mtime).isoformat(timespec="seconds")
+                    CACHE["aggiornato"] = (datetime.fromtimestamp(CACHE_FILE.stat().st_mtime) + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S")
                 except Exception:
                     CACHE["aggiornato"] = None
             else:
@@ -135,7 +150,7 @@ def _carica_cache():
 
 def _salva_cache(rows):
     CACHE["risultati"] = rows
-    CACHE["aggiornato"] = datetime.now().isoformat(timespec="seconds")
+    CACHE["aggiornato"] = _ora_roma().strftime("%Y-%m-%dT%H:%M:%S")
     try:
         payload = {"aggiornato": CACHE["aggiornato"], "zone": rows}
         CACHE_FILE.write_text(json.dumps(payload, ensure_ascii=False))
