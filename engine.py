@@ -3315,17 +3315,45 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             "stima_mappa": False,
         }
 
-    def _score_df(df, dist_km):
+    def _score_df(df, dist_km, allinea_fm=None):
+        """Bilancio: vicinanza + dati usabili + allineamento a FunghiMagazine.
+
+        - morta / assente → scartata (-1)
+        - più vicina ha vantaggio, ma una stazione un po' più lontana
+          e molto più affidabile (o allineata a FM) può vincere
+        """
         if df is None or len(df) < 5 or "precip" not in df.columns:
             return -1
         df = _sanifica_precip_df(df)
         if _pluvio_morto(df):
             return -1
         p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
-        tot = float(p.sum())
         umidi = int((p >= 0.4).sum())
-        # preferisci più giorni, più pioggia reale, distanza minore
-        return umidi * 3.0 + min(tot, 120) * 0.15 + max(0, 5.0 - float(dist_km or 5)) * 2.0
+        tot = float(p.sum())
+        d = float(dist_km) if dist_km is not None else 5.0
+        # distanza importante ma non assoluta (0 km → 14, 2 km → 10, 5 km → 4)
+        score_dist = max(0.0, 14.0 - d * 2.0)
+        # qualità serie
+        score_q = umidi * 1.8 + min(tot, 100) * 0.1
+        # allineamento a riferimento FM (se disponibile)
+        score_fm = 0.0
+        if allinea_fm is not None:
+            try:
+                ref = float(allinea_fm)
+                if ref >= 0 and tot >= 0:
+                    # quanto i mm della stazione somigliano a FM (0–10)
+                    diff = abs(tot - ref)
+                    if diff <= 8:
+                        score_fm = 10.0
+                    elif diff <= 18:
+                        score_fm = 6.0
+                    elif diff <= 35:
+                        score_fm = 3.0
+                    else:
+                        score_fm = 0.0
+            except Exception:
+                score_fm = 0.0
+        return score_dist + score_q + score_fm
 
     # ---- 1) Caput Frigoris (tutte le regioni dove c'è stazione in CF_STAZIONI) ----
     try:
@@ -3375,7 +3403,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     sc = 8.0 + min(float(mese_mm), 100) * 0.1
                 if sc >= 0:
                     candidati.append({
-                        "score": sc + 5.0,  # leggero bonus CF (rete curata)
+                        "score": sc,  # CF senza bonus distanza
                         "df": df_cf,
                         "info": _info_base(
                             f"Caput Frigoris · {cf.get('nome')}",
@@ -3571,7 +3599,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             if sc < 0:
                 continue
             candidati.append({
-                "score": sc + 6.0,  # bonus forte: stazioni curate FM (WU verificate)
+                "score": sc,  # FM senza bonus distanza
                 "df": df_fm,
                 "info": _info_base(
                     f"FunghiMagazine/WU · {slug}",
@@ -3586,7 +3614,54 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
 
     # ---- scegli la migliore stazione ----
     candidati = [c for c in candidati if c.get("score", -1) >= 0 and c.get("df") is not None]
-    candidati.sort(key=lambda x: -x["score"])
+
+    def _dist(c):
+        try:
+            return float((c.get("info") or {}).get("distanza_km") or 99)
+        except Exception:
+            return 99.0
+
+    def _mm30(c):
+        try:
+            df0 = c.get("df")
+            if df0 is None or "precip" not in df0.columns:
+                return None
+            return float(pd.to_numeric(df0["precip"], errors="coerce").fillna(0).sum())
+        except Exception:
+            return None
+
+    # Riferimento FM: media mm delle candidate FM/WU verificate (se ci sono)
+    ref_fm = None
+    mm_fm = []
+    for c in candidati:
+        fonte = str((c.get("info") or {}).get("fonte") or "").lower()
+        if "funghimagazine" in fonte or fonte.startswith("fm"):
+            m = _mm30(c)
+            if m is not None:
+                mm_fm.append(m)
+    if mm_fm:
+        ref_fm = sum(mm_fm) / len(mm_fm)
+
+    # Ricalcola score: distanza + qualità + allineamento FM
+    for c in candidati:
+        try:
+            d = _dist(c)
+            c["score"] = _score_df(c.get("df"), d, allinea_fm=ref_fm)
+        except Exception:
+            pass
+    candidati = [c for c in candidati if c.get("score", -1) >= 0]
+
+    # Scelta bilanciata:
+    # 1) ordina per score (vicinanza + affidabilità + FM)
+    # 2) se la 1ª è più lontana di ≥2.5 km della più vicina e lo score
+    #    non è chiaramente migliore (+5), preferisci la più vicina
+    candidati.sort(key=lambda c: (-float(c.get("score") or 0), _dist(c)))
+    if len(candidati) >= 2:
+        top = candidati[0]
+        vicina = min(candidati, key=_dist)
+        if vicina is not top and _dist(top) >= _dist(vicina) + 2.5:
+            if float(top.get("score") or 0) < float(vicina.get("score") or 0) + 5:
+                candidati = [vicina] + [c for c in candidati if c is not vicina]
 
     # Riepilogo reti confrontate (WU / WC / MN / CF / FM)
     confronto_reti = []
@@ -3612,7 +3687,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         try:
             sm = _mappa_smentisce_stazione(df, lat, lon)
             if sm is not None and len(candidati) > 1:
-                best = candidati[1]
+                # scarta la smentita e prendi la più vicina tra le restanti
+                rest = candidati[1:]
+                rest.sort(key=lambda c: float((c.get("info") or {}).get("distanza_km") or 99))
+                best = rest[0]
                 df = best["df"]
                 info = best["info"]
             elif sm is not None and sm.get("df") is not None:
