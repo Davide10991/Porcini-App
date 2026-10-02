@@ -3264,6 +3264,182 @@ def wu_serie_giornaliera(station_id, days=30):
         return None
 
 
+
+
+def _cf_registra_giorno_reale(station_id, scheda):
+    """Da oggi in poi: pioggia giornaliera CF = differenza del totale mensile.
+
+    Salva su disco (mn_giorni) la pioggia di oggi come:
+      max(0, mese_mm_oggi - mese_mm_ieri)   [stesso mese]
+    oppure usa oggi_mm se disponibile sulla scheda.
+    Al cambio mese: mese_mm è già il cumulato del nuovo mese.
+    """
+    scheda = scheda or {}
+    store = _carica_giorni_file() or {}
+    oggi = datetime.now().date()
+    oggi_s = oggi.isoformat()
+    try:
+        mese_mm = float(scheda["mese_mm"]) if scheda.get("mese_mm") is not None else None
+    except Exception:
+        mese_mm = None
+    try:
+        oggi_mm = float(scheda["oggi_mm"]) if scheda.get("oggi_mm") is not None else None
+    except Exception:
+        oggi_mm = None
+
+    meta_key = f"cf_meta:{station_id}"
+    meta = store.get(meta_key) if isinstance(store.get(meta_key), dict) else {}
+    prev_mese = meta.get("mese_mm")
+    prev_date = str(meta.get("date") or "")[:10]
+
+    daily = None
+    # 1) valore "oggi" della scheda se presente
+    if oggi_mm is not None:
+        daily = max(0.0, float(oggi_mm))
+    # 2) differenza sul cumulato mensile rispetto all'ultimo salvataggio
+    elif mese_mm is not None and prev_mese is not None and prev_date:
+        try:
+            d_prev = datetime.strptime(prev_date, "%Y-%m-%d").date()
+            if d_prev == oggi:
+                # già registrato oggi: non ricalcolare da zero, tieni o aggiorna
+                old = store.get(f"cf:{station_id}|{oggi_s}") or {}
+                if isinstance(old, dict) and old.get("precip") is not None:
+                    daily = max(0.0, float(old.get("precip") or 0))
+                # aggiorna con nuova differenza se il mensile è cresciuto da un salvataggio precedente nello stesso giorno
+                if float(mese_mm) >= float(prev_mese):
+                    # stesso giorno, più letture: incrementa
+                    delta = max(0.0, float(mese_mm) - float(prev_mese))
+                    if delta > 0:
+                        daily = max(0.0, float(old.get("precip") or 0)) + delta if isinstance(old, dict) else delta
+            elif d_prev.month == oggi.month and d_prev.year == oggi.year:
+                daily = max(0.0, float(mese_mm) - float(prev_mese))
+            else:
+                # nuovo mese: il mensile CF è già solo del mese nuovo
+                daily = max(0.0, float(mese_mm))
+        except Exception:
+            daily = None
+    elif mese_mm is not None and prev_mese is None:
+        # prima registrazione: non scaricare tutto il mese su oggi
+        daily = max(0.0, float(oggi_mm)) if oggi_mm is not None else 0.0
+
+    if daily is None:
+        daily = 0.0
+
+    key = f"cf:{station_id}|{oggi_s}"
+    store[key] = {
+        "date": oggi_s,
+        "precip": round(float(daily), 2),
+        "t_max": scheda.get("t_max"),
+        "t_min": scheda.get("t_min"),
+        "t_med": scheda.get("t_med"),
+        "vento_max": scheda.get("vento_max"),
+        "mese_mm": mese_mm,
+        "fonte": "cf_diff_mensile",
+    }
+    store[meta_key] = {
+        "date": oggi_s,
+        "mese_mm": mese_mm,
+        "oggi_mm": oggi_mm,
+    }
+    try:
+        st.session_state["mn_giorni"] = store
+    except Exception:
+        pass
+    try:
+        _salva_giorni_file()
+    except Exception:
+        pass
+    return store
+
+
+def _cf_distribuisci_mese(mese_mm, oggi_mm, days, lat, lon, scheda=None):
+    """Trasforma il totale mensile CF in una serie giornaliera.
+
+    Caput Frigoris sulla scheda pubblica dà solo oggi/mese/anno, non lo storico
+    giorno per giorno. Per non mettere tutto sul giorno corrente (che sballa
+    le buttate):
+      1) se c'è la mappa MN sul punto, distribuisce i mm mensili *in proporzione*
+         ai giorni piovosi della mappa
+      2) altrimenti distribuisce in modo uniforme sui giorni del mese corrente
+      3) il valore "oggi" della scheda, se presente, viene impostato su oggi
+    """
+    scheda = scheda or {}
+    oggi = datetime.now().date()
+    try:
+        mese_mm = float(mese_mm or 0)
+    except Exception:
+        mese_mm = 0.0
+    try:
+        oggi_mm = float(oggi_mm) if oggi_mm is not None else None
+    except Exception:
+        oggi_mm = None
+
+    # giorni da coprire (max days, ma almeno il mese corrente)
+    n = max(int(days or 30), 1)
+    date_list = [oggi - timedelta(days=i) for i in range(n)]
+    date_list = list(reversed(date_list))  # cronologico
+
+    weights = None
+    # 1) profilo dalla mappa MN
+    try:
+        mappa = mn_pioggia_mappa(lat, lon, min(n, 30)) or {}
+        mdf = mappa.get("df")
+        if mdf is not None and len(mdf) >= 5:
+            tmp = mdf.copy()
+            tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce").dt.normalize()
+            tmp["precip"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            by = {pd.Timestamp(r["date"]).date(): float(r["precip"]) for _, r in tmp.iterrows()}
+            w = [max(0.0, by.get(d, 0.0)) for d in date_list]
+            if sum(w) >= 1.0:
+                weights = w
+    except Exception:
+        weights = None
+
+    # 2) uniforme sul mese corrente (giorni già trascorsi)
+    if weights is None:
+        weights = []
+        for d in date_list:
+            # solo giorni del mese corrente pesano; gli altri a 0
+            if d.month == oggi.month and d.year == oggi.year:
+                weights.append(1.0)
+            else:
+                weights.append(0.0)
+        if sum(weights) < 1:
+            weights = [1.0] * len(date_list)
+
+    s = float(sum(weights)) or 1.0
+    precip = [mese_mm * (w / s) for w in weights]
+
+    # oggi: se la scheda ha oggi_mm, usalo (più fedele)
+    if oggi_mm is not None and len(precip):
+        # sostituisci solo il giorno di oggi, poi rinormalizza leggermente
+        # se la somma resterebbe molto diversa dal mese, tieni oggi e scala il resto
+        idx_oggi = len(date_list) - 1  # date_list finisce con oggi? reversed from oggi-n ... 
+        # date_list[0] = oldest, date_list[-1] = oggi
+        if date_list[-1] == oggi:
+            resto_target = max(0.0, mese_mm - max(0.0, oggi_mm))
+            precip[-1] = max(0.0, oggi_mm)
+            altri = precip[:-1]
+            s_altri = sum(altri) or 0.0
+            if s_altri > 0 and resto_target >= 0:
+                factor = resto_target / s_altri
+                precip = [x * factor for x in altri] + [precip[-1]]
+            elif resto_target == 0:
+                precip = [0.0] * (len(precip) - 1) + [precip[-1]]
+
+    recs = []
+    for d, mm in zip(date_list, precip):
+        recs.append({
+            "date": pd.Timestamp(d),
+            "precip": round(float(mm), 2),
+            "t_max": scheda.get("t_max"),
+            "t_min": scheda.get("t_min"),
+            "t_mean": scheda.get("t_med"),
+            "vento_max": scheda.get("vento_max"),
+        })
+    return pd.DataFrame(recs).sort_values("date")
+
+
 def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
     """Stazioni affidabili entro 5 km (tutte le regioni), poi mappa MN se scoperto.
 
@@ -3361,52 +3537,69 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         if cf:
             scheda = cf_scheda(cf["id"]) or {}
             mese_mm = scheda.get("mese_mm")
-            # costruisci serie grezza: se abbiamo solo mese, distribuisci in modo neutro
-            # meglio usare store locale se presente
-            store = {}
+            # registra OGGI come differenza sul totale mensile (storico vero da oggi in poi)
             try:
-                store = _carica_giorni_file() or {}
+                store = _cf_registra_giorno_reale(cf["id"], scheda) or {}
             except Exception:
-                store = {}
+                try:
+                    store = _carica_giorni_file() or {}
+                except Exception:
+                    store = {}
             recs = []
             oggi = datetime.now().date()
+            n_reali = 0
             for i in range(days):
                 d = oggi - timedelta(days=i)
                 key = f"cf:{cf['id']}|{d.isoformat()}"
                 old = store.get(key) or {}
-                if old:
+                if isinstance(old, dict) and old.get("precip") is not None:
                     recs.append({
                         "date": pd.Timestamp(d),
                         "precip": float(old.get("precip") or 0),
                         "t_max": old.get("t_max"),
                         "t_min": old.get("t_min"),
                         "t_mean": old.get("t_med") or old.get("t_mean"),
+                        "vento_max": old.get("vento_max"),
                     })
-            if not recs and mese_mm is not None and float(mese_mm) >= 0:
-                # un solo valore mensile noto: metti il totale sull'ultimo giorno del mese
-                # e 0 altrove (meglio del nulla; analizza_punto usa la somma)
-                for i in range(days):
-                    d = oggi - timedelta(days=i)
-                    mm = float(mese_mm) if i == 0 else 0.0
-                    recs.append({
-                        "date": pd.Timestamp(d),
-                        "precip": mm,
-                        "t_max": scheda.get("t_max"),
-                        "t_min": scheda.get("t_min"),
-                        "t_mean": scheda.get("t_med"),
-                    })
+                    if old.get("fonte") == "cf_diff_mensile":
+                        n_reali += 1
+            # giorni passati senza registrazione: riempi una sola volta distribuendo il mensile
+            if len(recs) < max(8, days // 2) and mese_mm is not None and float(mese_mm) >= 0:
+                df_dist = _cf_distribuisci_mese(
+                    mese_mm, scheda.get("oggi_mm"), days, lat, lon, scheda,
+                )
+                if df_dist is not None and len(df_dist):
+                    have = {pd.Timestamp(r["date"]).date() for r in recs}
+                    for _, row in df_dist.iterrows():
+                        dd = pd.Timestamp(row["date"]).date()
+                        if dd in have:
+                            continue
+                        # non sovrascrivere oggi se già registrato reale
+                        if dd == oggi and n_reali:
+                            continue
+                        recs.append({
+                            "date": pd.Timestamp(dd),
+                            "precip": float(row.get("precip") or 0),
+                            "t_max": scheda.get("t_max"),
+                            "t_min": scheda.get("t_min"),
+                            "t_mean": scheda.get("t_med"),
+                        })
             if recs:
-                df_cf = pd.DataFrame(recs).sort_values("date")
-                # se solo totale mensile sul giorno 0, non usare _pluvio_morto (umidi=1)
+                df_cf = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
                 sc = _score_df(df_cf, cf["distanza_km"])
                 if sc < 0 and mese_mm is not None and float(mese_mm) >= 8:
                     sc = 8.0 + min(float(mese_mm), 100) * 0.1
                 if sc >= 0:
+                    fonte_cf = f"Caput Frigoris · {cf.get('nome')}"
+                    if n_reali >= 1:
+                        fonte_cf += " (giornaliero da differenza mensile)"
+                    else:
+                        fonte_cf += " (mm mensili distribuiti; da oggi registrazione reale)"
                     candidati.append({
-                        "score": sc,  # CF senza bonus distanza
+                        "score": sc,
                         "df": df_cf,
                         "info": _info_base(
-                            f"Caput Frigoris · {cf.get('nome')}",
+                            fonte_cf,
                             cf.get("nome"),
                             cf.get("distanza_km"),
                             None,
