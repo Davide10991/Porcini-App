@@ -224,7 +224,7 @@ def _invia_codice_a_utente(email, codice):
         f"    {codice}\n\n"
         f"Registrati su Boletus Map inserendo questo codice.\n"
         f"Il codice funziona una sola volta e solo per: {email}\n\n"
-        f"Buone cercate,\n"
+        f"Buona cerca,\n"
         f"Il team Boletus Map\n"
     )
     msg = MIMEText(corpo, "plain", "utf-8")
