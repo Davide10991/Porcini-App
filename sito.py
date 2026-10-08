@@ -516,6 +516,7 @@ def robots():
         "Allow: /privacy\n"
         "Allow: /termini\n"
         "Allow: /cookie\n"
+        "Allow: /nascite\n"
         "Disallow: /api/\n"
         "Disallow: /admin/\n"
         "Sitemap: https://boletusmap.it/sitemap.xml\n"
@@ -532,6 +533,7 @@ def sitemap():
         "https://boletusmap.it/privacy",
         "https://boletusmap.it/termini",
         "https://boletusmap.it/cookie",
+        "https://boletusmap.it/nascite",
     ]
     items = "".join(
         f"<url><loc>{u}</loc><changefreq>weekly</changefreq></url>" for u in urls
@@ -553,6 +555,10 @@ def privacy():
 def termini():
     return render_template("termini.html")
 
+
+@app.route("/nascite")
+def nascite():
+    return render_template("nascite.html")
 
 @app.route("/cookie")
 def cookie():
