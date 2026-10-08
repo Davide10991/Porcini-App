@@ -14,6 +14,8 @@ try:
 except Exception:
     ZoneInfo = None
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 from functools import wraps
 import threading
 from pathlib import Path
@@ -213,29 +215,84 @@ def _consuma_codice(codice, email):
     return True, ""
 
 
-def _invia_codice_a_utente(email, codice):
+
+def _logo_path():
+    return Path(__file__).resolve().parent / "static" / "logo.png"
+
+
+def _invia_mail(dest, oggetto, corpo_testo, corpo_html=None):
+    """Invia email testo+HTML con logo inline se presente."""
     cfg = _smtp_conf()
     if not cfg.get("user") or not cfg.get("password"):
         return False
-    corpo = (
+    mittente = cfg.get("from") or cfg["user"]
+    logo = _logo_path()
+    if corpo_html and logo.exists():
+        msg = MIMEMultipart("related")
+        msg["Subject"] = oggetto
+        msg["From"] = mittente
+        msg["To"] = dest
+        alt = MIMEMultipart("alternative")
+        alt.attach(MIMEText(corpo_testo, "plain", "utf-8"))
+        alt.attach(MIMEText(corpo_html, "html", "utf-8"))
+        msg.attach(alt)
+        with open(logo, "rb") as f:
+            img = MIMEImage(f.read(), _subtype="png")
+        img.add_header("Content-ID", "<boletus_logo>")
+        img.add_header("Content-Disposition", "inline", filename="logo.png")
+        msg.attach(img)
+    else:
+        msg = MIMEText(corpo_testo, "plain", "utf-8")
+        msg["Subject"] = oggetto
+        msg["From"] = mittente
+        msg["To"] = dest
+    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
+        s.starttls()
+        s.login(cfg["user"], cfg["password"])
+        s.send_message(msg)
+    return True
+
+
+def _html_mail(titolo, paragrafi, footer="Buone cercate,<br>Il team Boletus Map"):
+    body = "".join(f"<p style=\"margin:0 0 12px;line-height:1.5\">{p}</p>" for p in paragrafi)
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#1a1008;font-family:Segoe UI,Helvetica,Arial,sans-serif">
+  <div style="max-width:520px;margin:24px auto;padding:28px 24px;background:#2a1a10;border:1px solid #c4783a;border-radius:16px;color:#f3e6d4">
+    <div style="text-align:center;margin-bottom:18px">
+      <img src="cid:boletus_logo" alt="Boletus Map" width="72" height="72"
+           style="border-radius:50%;border:2px solid #c4783a;display:inline-block">
+      <div style="margin-top:10px;font-size:22px;font-weight:700;color:#c4783a">Boletus Map</div>
+    </div>
+    <h2 style="margin:0 0 14px;font-size:18px;color:#f3e6d4">{titolo}</h2>
+    {body}
+    <p style="margin:20px 0 0;opacity:.9;line-height:1.5">{footer}</p>
+  </div>
+</body></html>"""
+
+
+def _invia_codice_a_utente(email, codice):
+    testo = (
         f"Ciao,\n\n"
         f"grazie per la donazione a supporto di Boletus Map.\n\n"
         f"Il tuo codice invito monouso è:\n\n"
         f"    {codice}\n\n"
         f"Registrati su Boletus Map inserendo questo codice.\n"
         f"Il codice funziona una sola volta e solo per: {email}\n\n"
-        f"Buona cerca,\n"
+        f"Buone cercate,\n"
         f"Il team Boletus Map\n"
     )
-    msg = MIMEText(corpo, "plain", "utf-8")
-    msg["Subject"] = "Il tuo codice invito Boletus Map"
-    msg["From"] = cfg.get("from") or cfg["user"]
-    msg["To"] = email
-    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
-        s.starttls()
-        s.login(cfg["user"], cfg["password"])
-        s.send_message(msg)
-    return True
+    html = _html_mail(
+        "Il tuo codice invito",
+        [
+            "Grazie per la donazione a supporto di <b>Boletus Map</b>.",
+            f"Il tuo <b>codice invito monouso</b> è:",
+            f"<div style=\"text-align:center;font-size:22px;letter-spacing:.08em;padding:14px;"
+            f"margin:8px 0;background:#1a1008;border-radius:10px;border:1px solid #c4783a\">"
+            f"<b>{codice}</b></div>",
+            f"Registrati inserendo questo codice. Vale <b>una sola volta</b> e solo per: <b>{email}</b>.",
+        ],
+    )
+    return _invia_mail(email, "Il tuo codice invito Boletus Map", testo, html)
 
 
 def _invia_richiesta_codice(email_richiedente, tx_id=""):
@@ -253,7 +310,7 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
     }
     _salva_richieste(reqs)
     if not cfg.get("user") or not cfg.get("password"):
-        return True  # richiesta salvata comunque
+        return True
     dest = ADMIN_NOTIFY_EMAIL or (cfg.get("from") or cfg.get("user"))
     quando = _ora_roma().strftime("%d/%m/%Y %H:%M")
     base = (request.url_root or "").rstrip("/")
@@ -264,55 +321,55 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
         f"Email: {email_richiedente}\n"
         f"ID pagamento PayPal (se indicato): {tx_id or '(non indicato)'}\n"
         f"IP: {request.remote_addr or '?'}\n\n"
-        "Verifica la donazione (≥ 10 €) su PayPal (davidemenna3@gmail.com),\n"
-        "poi approva e invia il codice monouso con questo link (devi essere loggato come admin):\n\n"
+        "Verifica la donazione (≥ 10 €) su PayPal,\n"
+        "poi approva e invia il codice monouso con questo link:\n\n"
         f"{link}\n"
     )
-    msg = MIMEText(corpo, "plain", "utf-8")
-    msg["Subject"] = f"Richiesta codice (donazione) — {email_richiedente}"
-    msg["From"] = cfg.get("from") or cfg["user"]
-    msg["To"] = dest
-    if email_richiedente:
-        msg["Reply-To"] = email_richiedente
-    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
-        s.starttls()
-        s.login(cfg["user"], cfg["password"])
-        s.send_message(msg)
+    html = _html_mail(
+        "Richiesta codice invito",
+        [
+            f"<b>Data/ora:</b> {quando}",
+            f"<b>Email:</b> {email_richiedente}",
+            f"<b>ID PayPal:</b> {tx_id or '(non indicato)'}",
+            f"<b>IP:</b> {request.remote_addr or '?'}",
+            "Verifica la donazione (≥ 10 €), poi approva dal link:",
+            f'<a href="{link}" style="color:#c4783a;word-break:break-all">{link}</a>',
+        ],
+        footer="Boletus Map — pannello admin",
+    )
+    try:
+        _invia_mail(dest, f"Richiesta codice (donazione) — {email_richiedente}", corpo, html)
+    except Exception:
+        pass
     return True
-
 
 
 def _invia_registrazione(dest):
-    cfg = _smtp_conf()
-    if not cfg.get("user") or not cfg.get("password"):
-        return False
-    corpo = (
+    testo = (
         f"Ciao,\n\n"
         f"benvenuto su Boletus Map.\n\n"
         f"La tua registrazione è andata a buon fine.\n\n"
-        f"Dati account\n"
-        f"-----------\n"
-        f"Email: {dest}\n\n"
-        f"Cosa puoi fare\n"
-        f"--------------\n"
-        f"- Consultare la mappa delle zone a porcini in Italia\n"
-        f"- Vedere lo stato delle buttate (alta / media / bassa)\n"
-        f"- Cliccare un punto o cercare un bosco per il dettaglio pioggia e nascite\n"
-        f"- Usare Radar PC, Mappe MN e la tabella delle zone\n\n"
-        f"Accedi con questa email e la password scelta in fase di registrazione.\n\n"
-        f"Se non sei stato tu a registrarti, ignora pure questo messaggio.\n\n"
+        f"Email account: {dest}\n\n"
+        f"Puoi consultare la mappa delle zone a porcini, lo stato delle buttate\n"
+        f"e cercare boschi o punti sulla mappa.\n\n"
+        f"Accedi con questa email e la password scelta in registrazione.\n\n"
+        f"Se non sei stato tu a registrarti, ignora questo messaggio.\n\n"
         f"Buone cercate,\n"
         f"Il team Boletus Map\n"
     )
-    msg = MIMEText(corpo, "plain", "utf-8")
-    msg["Subject"] = "Benvenuto su Boletus Map — registrazione confermata"
-    msg["From"] = cfg.get("from") or cfg["user"]
-    msg["To"] = dest
-    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
-        s.starttls()
-        s.login(cfg["user"], cfg["password"])
-        s.send_message(msg)
-    return True
+    html = _html_mail(
+        "Benvenuto su Boletus Map",
+        [
+            "La tua registrazione è andata a <b>buon fine</b>.",
+            f"<b>Account:</b> {dest}",
+            "Puoi consultare la mappa delle zone a porcini in Italia, vedere lo stato delle buttate "
+            "e cercare boschi o punti sulla mappa.",
+            "Accedi con questa email e la password scelta in fase di registrazione.",
+            "Se non sei stato tu a registrarti, ignora pure questo messaggio.",
+        ],
+    )
+    return _invia_mail(dest, "Benvenuto su Boletus Map — registrazione confermata", testo, html)
+
 
 
 def _carica_cache():
