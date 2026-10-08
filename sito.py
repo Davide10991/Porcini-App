@@ -414,6 +414,31 @@ def _safe_next():
     return None
 
 
+
+def _scadenza_prova(rec):
+    """Ritorna datetime scadenza prova, o None se account pieno."""
+    if not rec or rec.get("piano") != "prova":
+        return None
+    raw = rec.get("scadenza")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _prova_scaduta(email):
+    if _is_admin_email(email):
+        return False
+    rec = _utenti().get((email or "").strip().lower())
+    scad = _scadenza_prova(rec)
+    if scad is None:
+        return False
+    ora = _ora_roma().replace(tzinfo=None)
+    return ora > scad.replace(tzinfo=None)
+
+
 def login_required(fn):
     @wraps(fn)
     def wrap(*a, **k):
@@ -422,6 +447,9 @@ def login_required(fn):
             if nxt.endswith("?"):
                 nxt = nxt[:-1]
             return redirect(url_for("login", next=nxt))
+        if _prova_scaduta(session.get("email")):
+            session.clear()
+            return redirect(url_for("login", err="prova"))
         return fn(*a, **k)
 
     return wrap
@@ -527,11 +555,18 @@ def login():
                     return redirect(_safe_next() or url_for("mappa"))
             # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
-                session["ok"] = True
-                session["email"] = email_l
-                session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
-                return redirect(_safe_next() or url_for("mappa"))
-            err = "Email o password errati"
+                if _prova_scaduta(email_l):
+                    err = "Prova di 2 giorni scaduta. Per continuare serve il codice invito."
+                else:
+                    session["ok"] = True
+                    session["email"] = email_l
+                    session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
+                    session["piano"] = rec.get("piano") or "intero"
+                    return redirect(_safe_next() or url_for("mappa"))
+            if not err:
+                err = "Email o password errati"
+    if not err and request.args.get("err") == "prova":
+        err = "Prova di 2 giorni scaduta. Per continuare serve il codice invito."
     domanda = _nuovo_captcha()
     return render_template(
         "login.html",
@@ -660,6 +695,54 @@ def admin_approva_codice():
         f"<p>Email inviata all'utente: {mail_ok}</p>"
         f"<p><a href='/' style='color:#c4783a'>Torna alla mappa</a></p>"
         f"</body></html>"
+    )
+
+
+
+@app.route("/register/prova", methods=["POST"])
+def register_prova():
+    err = ""
+    email = (request.form.get("email") or "").strip().lower()
+    pw = (request.form.get("password") or "").strip()
+    pw2 = (request.form.get("password2") or "").strip()
+    if not _verifica_captcha(request.form.get("captcha")):
+        err = "Verifica anti-bot non corretta. Riprova."
+    elif not request.form.get("accetto"):
+        err = "Devi accettare Termini e Informativa privacy"
+    elif "@" not in email or "." not in email.split("@")[-1]:
+        err = "Email non valida"
+    elif len(pw) < 6:
+        err = "Password almeno 6 caratteri"
+    elif pw != pw2:
+        err = "Le password non coincidono"
+    else:
+        users = _utenti()
+        if email in users:
+            err = "Questa email è già registrata. La prova si può usare una sola volta."
+        else:
+            scad = _ora_roma().replace(tzinfo=None) + timedelta(days=2)
+            users[email] = {
+                "hash": generate_password_hash(pw),
+                "quando": _ora_roma().isoformat(timespec="seconds"),
+                "piano": "prova",
+                "scadenza": scad.isoformat(timespec="seconds"),
+            }
+            _salva_utenti(users)
+            try:
+                _invia_registrazione(email)
+            except Exception:
+                pass
+            session["ok"] = True
+            session["email"] = email
+            session["ruolo"] = "guest"
+            session["piano"] = "prova"
+            return redirect(url_for("mappa"))
+    return render_template(
+        "register.html",
+        errore=err,
+        ok_richiesta="",
+        paypal_url=PAYPAL_DONATE,
+        captcha_domanda=_nuovo_captcha(),
     )
 
 
