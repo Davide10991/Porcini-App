@@ -37,6 +37,7 @@ app.secret_key = "boletus-map-porcino-2026"
 ADMIN_USER = "Davide1099"  # login admin classico (username)
 ADMIN_PASS = "Ciccione99"
 # email con privilegi admin (login con password account o ADMIN_PASS)
+ADMIN_APPROVE_KEY = "BoletusApprove1099"  # consente approvazione dal link email
 ADMIN_EMAILS = {
     "davidemenna3@gmail.com",
     "boletusmap@gmail.com",
@@ -256,7 +257,7 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
     dest = ADMIN_NOTIFY_EMAIL or (cfg.get("from") or cfg.get("user"))
     quando = _ora_roma().strftime("%d/%m/%Y %H:%M")
     base = (request.url_root or "").rstrip("/")
-    link = f"{base}/admin/approva-codice?token={token}"
+    link = f"{base}/admin/approva-codice?token={token}&key={ADMIN_APPROVE_KEY}"
     corpo = (
         "Richiesta codice invito — Boletus Map\n\n"
         f"Data/ora: {quando}\n"
@@ -348,11 +349,22 @@ def _salva_cache(rows):
 _carica_cache()
 
 
+def _safe_next():
+    """Redirect post-login sicuro (solo path interni)."""
+    nxt = (request.args.get("next") or request.form.get("next") or "").strip()
+    if nxt.startswith("/") and not nxt.startswith("//"):
+        return nxt
+    return None
+
+
 def login_required(fn):
     @wraps(fn)
     def wrap(*a, **k):
         if not session.get("ok"):
-            return redirect(url_for("login"))
+            nxt = request.full_path if request.query_string else request.path
+            if nxt.endswith("?"):
+                nxt = nxt[:-1]
+            return redirect(url_for("login", next=nxt))
         return fn(*a, **k)
 
     return wrap
@@ -390,7 +402,7 @@ def login():
                 session["ok"] = True
                 session["email"] = ADMIN_USER
                 session["ruolo"] = "admin"
-                return redirect(url_for("home"))
+                return redirect(_safe_next() or url_for("home"))
             # 2) email admin (davidemenna3@gmail.com, ecc.)
             if _is_admin_email(email_l):
                 ok_pw = (pw == ADMIN_PASS)
@@ -400,16 +412,21 @@ def login():
                     session["ok"] = True
                     session["email"] = email_l
                     session["ruolo"] = "admin"
-                    return redirect(url_for("home"))
+                    return redirect(_safe_next() or url_for("home"))
             # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
                 session["ok"] = True
                 session["email"] = email_l
                 session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
-                return redirect(url_for("home"))
+                return redirect(_safe_next() or url_for("home"))
             err = "Email o password errati"
     domanda = _nuovo_captcha()
-    return render_template("login.html", errore=err, captcha_domanda=domanda)
+    return render_template(
+        "login.html",
+        errore=err,
+        captcha_domanda=domanda,
+        next_url=(request.args.get("next") or request.form.get("next") or ""),
+    )
 
 
 
@@ -447,7 +464,7 @@ def admin_codici():
         rows.append(
             f"<tr><td>{r.get('quando','')}</td><td>{r.get('email','')}</td>"
             f"<td>{r.get('tx_id') or '—'}</td>"
-            f"<td><a style='color:#c4783a' href='/admin/approva-codice?token={tok}'>Approva e invia codice</a></td></tr>"
+            f"<td><a style='color:#c4783a' href='/admin/approva-codice?token={tok}&key={ADMIN_APPROVE_KEY}'>Approva e invia codice</a></td></tr>"
         )
     body = "".join(rows) or "<tr><td colspan=4>Nessuna richiesta in attesa</td></tr>"
     return (
@@ -464,16 +481,44 @@ def admin_codici():
 
 
 @app.route("/admin/approva-codice")
-@login_required
 def admin_approva_codice():
-    if session.get("ruolo") != "admin" and not _is_admin_email(session.get("email")):
-        return "Solo admin", 403
-    session["ruolo"] = "admin"
     token = (request.args.get("token") or "").strip()
+    key = (request.args.get("key") or "").strip()
+    # accesso: admin loggato OPPURE chiave segreta nel link email
+    is_admin = session.get("ok") and (
+        session.get("ruolo") == "admin" or _is_admin_email(session.get("email"))
+    )
+    key_ok = bool(ADMIN_APPROVE_KEY) and key == ADMIN_APPROVE_KEY
+    if not is_admin and not key_ok:
+        # manda al login e poi torna qui
+        nxt = request.full_path
+        if nxt.endswith("?"):
+            nxt = nxt[:-1]
+        return redirect(url_for("login", next=nxt))
+    if is_admin:
+        session["ruolo"] = "admin"
+    if not token:
+        return "Token mancante. Usa /admin/codici", 400
     reqs = _carica_richieste()
     rec = reqs.get(token)
-    if not rec or rec.get("stato") != "in_attesa":
-        return "Richiesta non trovata o già gestita", 404
+    if not rec:
+        return (
+            "<html><body style='font-family:sans-serif;background:#1a1008;color:#f3e6d4;padding:40px'>"
+            "<h2>Richiesta non trovata</h2>"
+            "<p>Token sconosciuto. Controlla di aver aperto il link completo dalla mail.</p>"
+            "<p><a href='/admin/codici' style='color:#c4783a'>Vai all'elenco richieste</a></p>"
+            "</body></html>"
+        ), 404
+    if rec.get("stato") != "in_attesa":
+        cod = rec.get("codice") or "?"
+        return (
+            f"<html><body style='font-family:sans-serif;background:#1a1008;color:#f3e6d4;padding:40px'>"
+            f"<h2>Già gestita</h2>"
+            f"<p>Questa richiesta è già stata approvata.</p>"
+            f"<p>Codice: <b>{cod}</b> → {rec.get('email')}</p>"
+            f"<p><a href='/admin/codici' style='color:#c4783a'>Elenco richieste</a></p>"
+            f"</body></html>"
+        )
     email = (rec.get("email") or "").strip().lower()
     if not email:
         return "Email mancante", 400
@@ -555,6 +600,22 @@ def logout():
 @app.route("/")
 @login_required
 def home():
+    # promuovi admin se email in lista
+    if _is_admin_email(session.get("email")):
+        session["ruolo"] = "admin"
+    ruolo = session.get("ruolo", "guest")
+    richieste = []
+    if ruolo == "admin" or _is_admin_email(session.get("email")):
+        reqs = _carica_richieste()
+        for tok, r in reqs.items():
+            if r.get("stato") == "in_attesa":
+                richieste.append({
+                    "token": tok,
+                    "email": r.get("email") or "",
+                    "quando": r.get("quando") or "",
+                    "tx_id": r.get("tx_id") or "",
+                })
+        richieste.sort(key=lambda x: x.get("quando") or "", reverse=True)
     boschi = [
         {
             "nome": p.get("nome"),
@@ -570,9 +631,11 @@ def home():
         "index.html",
         n_punti=len(engine.PUNTI),
         regioni=sorted({p["regione"] for p in engine.PUNTI}),
-        ruolo=session.get("ruolo", "guest"),
+        ruolo=ruolo,
         email=session.get("email", ""),
         boschi_json=boschi,
+        richieste_codici=richieste,
+        approve_key=ADMIN_APPROVE_KEY if ruolo == "admin" else "",
     )
 
 
