@@ -34,8 +34,14 @@ import engine
 
 app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
-ADMIN_USER = "Davide1099"
+ADMIN_USER = "Davide1099"  # login admin classico (username)
 ADMIN_PASS = "Ciccione99"
+# email con privilegi admin (login con password account o ADMIN_PASS)
+ADMIN_EMAILS = {
+    "davidemenna3@gmail.com",
+    "boletusmap@gmail.com",
+    "davide1099",
+}
 ADMIN_NOTIFY_EMAIL = "boletusmap@gmail.com"
 PAYPAL_DONATE = "https://paypal.me/Davide751/10"
 CODES_FILE = Path(__file__).resolve().parent / "invite_codes.json"
@@ -96,6 +102,18 @@ def _utenti():
 def _salva_utenti(d):
     USERS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
 
+
+
+
+def _is_admin_email(email):
+    e = (email or "").strip().lower()
+    if not e:
+        return False
+    if e in {x.lower() for x in ADMIN_EMAILS}:
+        return True
+    if e == (ADMIN_USER or "").strip().lower():
+        return True
+    return False
 
 
 def _nuovo_captcha():
@@ -365,17 +383,29 @@ def login():
             email = (request.form.get("email") or "").strip()
             pw = (request.form.get("password") or "").strip()
             email_l = email.lower()
+            users = _utenti()
+            rec = users.get(email_l)
+            # 1) username admin classico
             if email == ADMIN_USER and pw == ADMIN_PASS:
                 session["ok"] = True
                 session["email"] = ADMIN_USER
                 session["ruolo"] = "admin"
                 return redirect(url_for("home"))
-            users = _utenti()
-            rec = users.get(email_l)
+            # 2) email admin (davidemenna3@gmail.com, ecc.)
+            if _is_admin_email(email_l):
+                ok_pw = (pw == ADMIN_PASS)
+                if not ok_pw and rec:
+                    ok_pw = check_password_hash(rec.get("hash", ""), pw)
+                if ok_pw:
+                    session["ok"] = True
+                    session["email"] = email_l
+                    session["ruolo"] = "admin"
+                    return redirect(url_for("home"))
+            # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
                 session["ok"] = True
                 session["email"] = email_l
-                session["ruolo"] = "guest"
+                session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
                 return redirect(url_for("home"))
             err = "Email o password errati"
     domanda = _nuovo_captcha()
@@ -402,11 +432,43 @@ def richiedi_codice():
         return jsonify(ok=False, errore="Impossibile inviare la richiesta. Riprova più tardi.")
 
 
+
+@app.route("/admin/codici")
+@login_required
+def admin_codici():
+    if session.get("ruolo") != "admin" and not _is_admin_email(session.get("email")):
+        return "Solo amministratore", 403
+    session["ruolo"] = "admin"
+    reqs = _carica_richieste()
+    pending = [(tok, r) for tok, r in reqs.items() if r.get("stato") == "in_attesa"]
+    pending.sort(key=lambda x: x[1].get("quando") or "", reverse=True)
+    rows = []
+    for tok, r in pending:
+        rows.append(
+            f"<tr><td>{r.get('quando','')}</td><td>{r.get('email','')}</td>"
+            f"<td>{r.get('tx_id') or '—'}</td>"
+            f"<td><a style='color:#c4783a' href='/admin/approva-codice?token={tok}'>Approva e invia codice</a></td></tr>"
+        )
+    body = "".join(rows) or "<tr><td colspan=4>Nessuna richiesta in attesa</td></tr>"
+    return (
+        "<html><body style='font-family:system-ui;background:#1a1008;color:#f3e6d4;padding:24px'>"
+        "<h1>Boletus Map — Codici invito</h1>"
+        "<p>Richieste in attesa (dopo donazione PayPal ≥ 10 €). Clicca Approva per generare e inviare il codice monouso.</p>"
+        "<table border='1' cellpadding='8' style='border-collapse:collapse;width:100%;max-width:900px'>"
+        "<tr><th>Quando</th><th>Email</th><th>ID PayPal</th><th>Azione</th></tr>"
+        + body +
+        "</table>"
+        "<p style='margin-top:20px'><a href='/' style='color:#c4783a'>← Mappa</a></p>"
+        "</body></html>"
+    )
+
+
 @app.route("/admin/approva-codice")
 @login_required
 def admin_approva_codice():
-    if session.get("ruolo") != "admin":
+    if session.get("ruolo") != "admin" and not _is_admin_email(session.get("email")):
         return "Solo admin", 403
+    session["ruolo"] = "admin"
     token = (request.args.get("token") or "").strip()
     reqs = _carica_richieste()
     rec = reqs.get(token)
