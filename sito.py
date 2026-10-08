@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import string
 import smtplib
 from datetime import datetime, timedelta
 try:
@@ -33,8 +35,10 @@ app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
 ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
-INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
-ADMIN_NOTIFY_EMAIL = "boletusmap@gmail.com"  # riceve le richieste codice invito
+ADMIN_NOTIFY_EMAIL = "boletusmap@gmail.com"
+PAYPAL_DONATE = "https://www.paypal.com/paypalme/davidemenna3/10"
+CODES_FILE = Path(__file__).resolve().parent / "invite_codes.json"
+REQUESTS_FILE = Path(__file__).resolve().parent / "invite_requests.json"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
@@ -109,23 +113,123 @@ def _smtp_conf():
 
 
 
-def _invia_richiesta_codice(email_richiedente):
-    """Avvisa l'admin che qualcuno chiede il codice invito."""
+
+def _carica_codici():
+    if not CODES_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CODES_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _salva_codici(d):
+    CODES_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _carica_richieste():
+    if not REQUESTS_FILE.exists():
+        return {}
+    try:
+        data = json.loads(REQUESTS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _salva_richieste(d):
+    REQUESTS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _genera_codice_unico():
+    alphabet = string.ascii_uppercase + string.digits
+    codici = _carica_codici()
+    for _ in range(30):
+        code = "BM-" + "".join(secrets.choice(alphabet) for _ in range(8))
+        if code not in codici:
+            return code
+    return "BM-" + secrets.token_hex(5).upper()
+
+
+def _consuma_codice(codice, email):
+    """Valida e segna il codice come usato. Ritorna (ok, errore)."""
+    codice = (codice or "").strip()
+    codici = _carica_codici()
+    rec = codici.get(codice)
+    if not rec:
+        return False, "Codice invito non valido o già usato"
+    if rec.get("stato") == "usato":
+        return False, "Questo codice è già stato utilizzato"
+    # se il codice era riservato a una email, deve coincidere
+    riservato = (rec.get("email") or "").strip().lower()
+    if riservato and riservato != (email or "").strip().lower():
+        return False, "Questo codice è riservato a un altro indirizzo email"
+    rec["stato"] = "usato"
+    rec["usato_da"] = email
+    rec["usato_il"] = _ora_roma().isoformat(timespec="seconds")
+    codici[codice] = rec
+    _salva_codici(codici)
+    return True, ""
+
+
+def _invia_codice_a_utente(email, codice):
     cfg = _smtp_conf()
     if not cfg.get("user") or not cfg.get("password"):
         return False
+    corpo = (
+        f"Ciao,\n\n"
+        f"grazie per la donazione a supporto di Boletus Map.\n\n"
+        f"Il tuo codice invito monouso è:\n\n"
+        f"    {codice}\n\n"
+        f"Registrati su Boletus Map inserendo questo codice.\n"
+        f"Il codice funziona una sola volta e solo per: {email}\n\n"
+        f"Buone cercate,\n"
+        f"Il team Boletus Map\n"
+    )
+    msg = MIMEText(corpo, "plain", "utf-8")
+    msg["Subject"] = "Il tuo codice invito Boletus Map"
+    msg["From"] = cfg.get("from") or cfg["user"]
+    msg["To"] = email
+    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
+        s.starttls()
+        s.login(cfg["user"], cfg["password"])
+        s.send_message(msg)
+    return True
+
+
+def _invia_richiesta_codice(email_richiedente, tx_id=""):
+    """Salva richiesta + avvisa admin. Il codice si invia solo dopo approvazione (donazione)."""
+    cfg = _smtp_conf()
+    email_richiedente = (email_richiedente or "").strip().lower()
+    token = secrets.token_urlsafe(16)
+    reqs = _carica_richieste()
+    reqs[token] = {
+        "email": email_richiedente,
+        "tx_id": (tx_id or "").strip(),
+        "quando": _ora_roma().isoformat(timespec="seconds"),
+        "ip": getattr(request, "remote_addr", None),
+        "stato": "in_attesa",
+    }
+    _salva_richieste(reqs)
+    if not cfg.get("user") or not cfg.get("password"):
+        return True  # richiesta salvata comunque
     dest = ADMIN_NOTIFY_EMAIL or (cfg.get("from") or cfg.get("user"))
     quando = _ora_roma().strftime("%d/%m/%Y %H:%M")
+    base = (request.url_root or "").rstrip("/")
+    link = f"{base}/admin/approva-codice?token={token}"
     corpo = (
         "Richiesta codice invito — Boletus Map\n\n"
         f"Data/ora: {quando}\n"
-        f"Email richiedente: {email_richiedente or '(non indicata)'}\n"
+        f"Email: {email_richiedente}\n"
+        f"ID pagamento PayPal (se indicato): {tx_id or '(non indicato)'}\n"
         f"IP: {request.remote_addr or '?'}\n\n"
-        "Se vuoi autorizzarlo, inviagli il codice di invito per registrarsi.\n"
-        f"Codice attuale (solo per te): {INVITE_CODE}\n"
+        "Verifica la donazione (≥ 10 €) su PayPal (davidemenna3@gmail.com),\n"
+        "poi approva e invia il codice monouso con questo link (devi essere loggato come admin):\n\n"
+        f"{link}\n"
     )
     msg = MIMEText(corpo, "plain", "utf-8")
-    msg["Subject"] = f"Richiesta codice invito — {email_richiedente or 'senza email'}"
+    msg["Subject"] = f"Richiesta codice (donazione) — {email_richiedente}"
     msg["From"] = cfg.get("from") or cfg["user"]
     msg["To"] = dest
     if email_richiedente:
@@ -135,6 +239,7 @@ def _invia_richiesta_codice(email_richiedente):
         s.login(cfg["user"], cfg["password"])
         s.send_message(msg)
     return True
+
 
 
 def _invia_registrazione(dest):
@@ -156,7 +261,7 @@ def _invia_registrazione(dest):
         f"- Usare Radar PC, Mappe MN e la tabella delle zone\n\n"
         f"Accedi con questa email e la password scelta in fase di registrazione.\n\n"
         f"Se non sei stato tu a registrarti, ignora pure questo messaggio.\n\n"
-        f"Buona Cerca,\n"
+        f"Buone cercate,\n"
         f"Il team Boletus Map\n"
     )
     msg = MIMEText(corpo, "plain", "utf-8")
@@ -256,15 +361,62 @@ def login():
 @app.route("/register/richiedi-codice", methods=["POST"])
 def richiedi_codice():
     email = (request.form.get("email") or "").strip().lower()
-    # Solo richiesta codice: non confondere con la registrazione
+    tx_id = (request.form.get("tx_id") or "").strip()
+    donato = (request.form.get("donato") or "") in ("1", "true", "on", "yes")
     if not email or "@" not in email:
-        return jsonify(ok=False, errore="Inserisci prima la tua email, poi clicca Richiedi codice invito")
+        return jsonify(ok=False, errore="Inserisci prima la tua email")
+    if not donato:
+        return jsonify(ok=False, errore="Conferma di aver donato almeno 10 € via PayPal")
     try:
-        if _invia_richiesta_codice(email):
-            return jsonify(ok=True, messaggio="Richiesta inviata. Ti contatteremo con il codice di invito.")
-        return jsonify(ok=False, errore="Invio non configurato. Riprova più tardi.")
+        _invia_richiesta_codice(email, tx_id=tx_id)
+        return jsonify(
+            ok=True,
+            messaggio="Richiesta inviata. Dopo la verifica della donazione riceverai il codice invito via email.",
+        )
     except Exception:
         return jsonify(ok=False, errore="Impossibile inviare la richiesta. Riprova più tardi.")
+
+
+@app.route("/admin/approva-codice")
+@login_required
+def admin_approva_codice():
+    if session.get("ruolo") != "admin":
+        return "Solo admin", 403
+    token = (request.args.get("token") or "").strip()
+    reqs = _carica_richieste()
+    rec = reqs.get(token)
+    if not rec or rec.get("stato") != "in_attesa":
+        return "Richiesta non trovata o già gestita", 404
+    email = (rec.get("email") or "").strip().lower()
+    if not email:
+        return "Email mancante", 400
+    codice = _genera_codice_unico()
+    codici = _carica_codici()
+    codici[codice] = {
+        "email": email,
+        "stato": "libero",
+        "creato": _ora_roma().isoformat(timespec="seconds"),
+        "token_richiesta": token,
+    }
+    _salva_codici(codici)
+    rec["stato"] = "approvata"
+    rec["codice"] = codice
+    reqs[token] = rec
+    _salva_richieste(reqs)
+    try:
+        _invia_codice_a_utente(email, codice)
+        mail_ok = "sì"
+    except Exception as e:
+        mail_ok = f"no ({e})"
+    return (
+        f"<html><body style='font-family:sans-serif;background:#1a1008;color:#f3e6d4;padding:40px'>"
+        f"<h2>Codice approvato</h2>"
+        f"<p>Email: <b>{email}</b></p>"
+        f"<p>Codice monouso: <b>{codice}</b></p>"
+        f"<p>Email inviata all'utente: {mail_ok}</p>"
+        f"<p><a href='/' style='color:#c4783a'>Torna alla mappa</a></p>"
+        f"</body></html>"
+    )
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -275,9 +427,7 @@ def register():
         pw = (request.form.get("password") or "").strip()
         pw2 = (request.form.get("password2") or "").strip()
         codice = (request.form.get("codice") or "").strip()
-        if codice != INVITE_CODE:
-            err = "Codice di invito non valido"
-        elif "@" not in email or "." not in email.split("@")[-1]:
+        if "@" not in email or "." not in email.split("@")[-1]:
             err = "Email non valida"
         elif len(pw) < 6:
             err = "Password almeno 6 caratteri"
@@ -288,20 +438,25 @@ def register():
             if email in users:
                 err = "Questa email è già registrata"
             else:
-                users[email] = {
-                    "hash": generate_password_hash(pw),
-                    "quando": datetime.now().isoformat(timespec="seconds"),
-                }
-                _salva_utenti(users)
-                try:
-                    _invia_registrazione(email)
-                except Exception:
-                    pass
-                session["ok"] = True
-                session["email"] = email
-                session["ruolo"] = "guest"
-                return redirect(url_for("home"))
-    return render_template("register.html", errore=err, ok_richiesta="")
+                ok_c, err_c = _consuma_codice(codice, email)
+                if not ok_c:
+                    err = err_c
+                else:
+                    users[email] = {
+                        "hash": generate_password_hash(pw),
+                        "quando": datetime.now().isoformat(timespec="seconds"),
+                        "codice_usato": codice,
+                    }
+                    _salva_utenti(users)
+                    try:
+                        _invia_registrazione(email)
+                    except Exception:
+                        pass
+                    session["ok"] = True
+                    session["email"] = email
+                    session["ruolo"] = "guest"
+                    return redirect(url_for("home"))
+    return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE)
 
 
 @app.route("/logout")

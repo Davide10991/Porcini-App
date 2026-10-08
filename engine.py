@@ -4616,7 +4616,11 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     if 4 <= giorni_con_pioggia <= 12 and precip_totale >= 35:
         score_pioggia = min(70, score_pioggia + 6)
 
+    # Temperature (indicazioni tipo FunghiMagazine / micologia pratica):
+    # dopo la pioggia le minime non devono essere troppo basse (gelate o freddo
+    # prolungato rallentano/fermano la buttata); ideali miti, non afose.
     score_temp = 0
+    nota_temp = ""
     if t_max_ok[0] <= t_max_media <= t_max_ok[1]:
         score_temp += 25
     elif t_max_ok[0] - 3 <= t_max_media <= t_max_ok[1] + 3:
@@ -4630,6 +4634,28 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         score_temp += 10
     else:
         score_temp += 3
+
+    # Freddo eccessivo (FM: temperature troppo basse ostacolano le nascite)
+    try:
+        tmin_series = pd.to_numeric(df.get("t_min"), errors="coerce").dropna()
+        if len(tmin_series):
+            n_gelo = int((tmin_series <= 2.0).sum())
+            n_freddo = int((tmin_series < 5.0).sum())
+            tmin_coda = float(pd.to_numeric(coda.get("t_min"), errors="coerce").mean()) if "t_min" in coda.columns else t_min_media
+            if n_gelo >= 2 or (not pd.isna(tmin_coda) and tmin_coda <= 2.0):
+                score_temp = max(0, score_temp - 22)
+                nota_temp = "Temperature troppo basse (rischio gelo): nascite frenate"
+            elif n_freddo >= 5 or (not pd.isna(tmin_coda) and tmin_coda < 5.0):
+                score_temp = max(0, score_temp - 12)
+                nota_temp = "Minime basse (<5°C): buttata rallentata"
+            elif t_min_media < 6.0:
+                score_temp = max(0, score_temp - 6)
+                nota_temp = "Temperature fresche: crescita lenta"
+    except Exception:
+        pass
+    if t_max_media >= 30:
+        score_temp = max(0, score_temp - 10)
+        nota_temp = (nota_temp + " · " if nota_temp else "") + "Troppo caldo: micelio sotto stress"
 
     # attesa: faggio 14, castagno 12, quercia 10 — il caldo accorcia un filo
     specie = specie_porcini(tipo_bosco, quota, t_max_media)
@@ -4717,6 +4743,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         consiglio = f"Specie: {txt_sp} · " + consiglio
     if fattore_v < 0.5:
         consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
+    if nota_temp:
+        consiglio = nota_temp + " · " + consiglio
     sb = stato_buttata(buttate, precip_totale, giorni_attesa)
 
     dettaglio = {
