@@ -253,7 +253,7 @@ def _invia_mail(dest, oggetto, corpo_testo, corpo_html=None):
     return True
 
 
-def _html_mail(titolo, paragrafi, footer="Buonq cerca,<br>Il team Boletus Map"):
+def _html_mail(titolo, paragrafi, footer="Buona cerca,<br>Il team Boletus Map"):
     body = "".join(f"<p style=\"margin:0 0 12px;line-height:1.5\">{p}</p>" for p in paragrafi)
     return f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#1a1008;font-family:Segoe UI,Helvetica,Arial,sans-serif">
