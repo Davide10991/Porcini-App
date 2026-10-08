@@ -156,7 +156,7 @@ def _invia_registrazione(dest):
         f"- Usare Radar PC, Mappe MN e la tabella delle zone\n\n"
         f"Accedi con questa email e la password scelta in fase di registrazione.\n\n"
         f"Se non sei stato tu a registrarti, ignora pure questo messaggio.\n\n"
-        f"Buone cercate,\n"
+        f"Buona Cerca,\n"
         f"Il team Boletus Map\n"
     )
     msg = MIMEText(corpo, "plain", "utf-8")
