@@ -34,6 +34,7 @@ app.secret_key = "boletus-map-porcino-2026"
 ADMIN_USER = "Davide1099"
 ADMIN_PASS = "Ciccione99"
 INVITE_CODE = "BoletusMap1099"  # obbligatorio per registrarsi
+ADMIN_NOTIFY_EMAIL = "boletusmap@gmail.com"  # riceve le richieste codice invito
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
@@ -105,6 +106,35 @@ def _smtp_conf():
         "password": os.environ.get("BOLETUS_SMTP_PASS", ""),
         "from": os.environ.get("BOLETUS_SMTP_FROM", "") or os.environ.get("BOLETUS_SMTP_USER", ""),
     }
+
+
+
+def _invia_richiesta_codice(email_richiedente):
+    """Avvisa l'admin che qualcuno chiede il codice invito."""
+    cfg = _smtp_conf()
+    if not cfg.get("user") or not cfg.get("password"):
+        return False
+    dest = ADMIN_NOTIFY_EMAIL or (cfg.get("from") or cfg.get("user"))
+    quando = _ora_roma().strftime("%d/%m/%Y %H:%M")
+    corpo = (
+        "Richiesta codice invito — Boletus Map\n\n"
+        f"Data/ora: {quando}\n"
+        f"Email richiedente: {email_richiedente or '(non indicata)'}\n"
+        f"IP: {request.remote_addr or '?'}\n\n"
+        "Se vuoi autorizzarlo, inviagli il codice di invito per registrarsi.\n"
+        f"Codice attuale (solo per te): {INVITE_CODE}\n"
+    )
+    msg = MIMEText(corpo, "plain", "utf-8")
+    msg["Subject"] = f"Richiesta codice invito — {email_richiedente or 'senza email'}"
+    msg["From"] = cfg.get("from") or cfg["user"]
+    msg["To"] = dest
+    if email_richiedente:
+        msg["Reply-To"] = email_richiedente
+    with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
+        s.starttls()
+        s.login(cfg["user"], cfg["password"])
+        s.send_message(msg)
+    return True
 
 
 def _invia_registrazione(dest):
@@ -222,6 +252,25 @@ def login():
     return render_template("login.html", errore=err)
 
 
+
+@app.route("/register/richiedi-codice", methods=["POST"])
+def richiedi_codice():
+    email = (request.form.get("email") or "").strip().lower()
+    err = ""
+    ok = ""
+    if not email or "@" not in email:
+        err = "Inserisci prima la tua email, poi clicca Richiedi codice invito"
+    else:
+        try:
+            if _invia_richiesta_codice(email):
+                ok = "Richiesta inviata. Ti contatteremo con il codice di invito."
+            else:
+                err = "Invio non configurato. Riprova più tardi."
+        except Exception:
+            err = "Impossibile inviare la richiesta. Riprova più tardi."
+    return render_template("register.html", errore=err, ok_richiesta=ok)
+
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     err = ""
@@ -256,7 +305,7 @@ def register():
                 session["email"] = email
                 session["ruolo"] = "guest"
                 return redirect(url_for("home"))
-    return render_template("register.html", errore=err)
+    return render_template("register.html", errore=err, ok_richiesta="")
 
 
 @app.route("/logout")
