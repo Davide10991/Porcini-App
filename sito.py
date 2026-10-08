@@ -442,6 +442,22 @@ def _jsonable(obj):
     return str(obj)
 
 
+
+
+@app.route("/privacy")
+def privacy():
+    return render_template("privacy.html")
+
+
+@app.route("/termini")
+def termini():
+    return render_template("termini.html")
+
+
+@app.route("/cookie")
+def cookie():
+    return render_template("cookie.html")
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = ""
@@ -616,7 +632,9 @@ def register():
         pw = (request.form.get("password") or "").strip()
         pw2 = (request.form.get("password2") or "").strip()
         codice = (request.form.get("codice") or "").strip()
-        if "@" not in email or "." not in email.split("@")[-1]:
+        if not request.form.get("accetto"):
+            err = "Devi accettare Termini e Informativa privacy"
+        elif "@" not in email or "." not in email.split("@")[-1]:
             err = "Email non valida"
         elif len(pw) < 6:
             err = "Password almeno 6 caratteri"
