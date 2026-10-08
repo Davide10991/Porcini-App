@@ -4223,7 +4223,8 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
          acqua e umidità, un po' di meno se caldo/vento secco)
       4) nuova pioggia durante la buttata può *incrociare* una seconda onda
 
-    La buttata inizia alle nascite, non al giorno della pioggia.
+    I giorni di attesa partono dalla *prima* pioggia importante (inizio spugnata);
+    la buttata (nascite) inizia dopo giorni_attesa da quella data.
     """
     if df is None or len(df) == 0 or "precip" not in df.columns:
         return []
@@ -4325,7 +4326,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             durata = round(durata * 0.95)
         # vento solo DOPO questa spugnata (prima non conta)
         try:
-            fv_evt = float(riepilogo_vento(d, giorni=20, dopo_data=data_evt).get("fattore_vento") or 1.0)
+            fv_evt = float(riepilogo_vento(d, giorni=20, dopo_data=data_riferimento).get("fattore_vento") or 1.0)
         except Exception:
             fv_evt = float(fattore_v or 1.0)
         if fv_evt < 0.45:
@@ -4347,8 +4348,10 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             attesa = max(7, attesa - 3)
         elif terreno_umido:
             attesa = max(8, attesa - 1)
-        # La buttata inizia alle *nascite* (inizio), non al giorno della spugnata.
-        inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=attesa)
+        # Attesa e buttata si contano dalla *prima* pioggia importante del cluster
+        # (inizio spugnata), non dall'ultimo giorno di pioggia.
+        data_riferimento = pd.Timestamp(data_start if data_start is not None else data_evt)
+        inizio = data_riferimento + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
         # Asciutto prolungato *dopo* le nascite può chiudere un po' prima;
         # NON si usa la data della spugnata (prima tagliava a pioggia+12gg e
@@ -4373,7 +4376,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             "pioggia_efficace": round(float(mm_eff), 1),
             "giorni_pioggia": int(n_gg),
             "soglia_mm": round(soglia, 0),
-            "data_pioggia": pd.Timestamp(data_evt).date().isoformat(),
+            "data_pioggia": data_riferimento.date().isoformat(),
             "inizio": inizio.date().isoformat(),
             "fine": fine.date().isoformat(),
             "attiva": attiva,
