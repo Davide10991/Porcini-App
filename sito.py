@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import secrets
 import string
 import smtplib
@@ -94,6 +95,26 @@ def _utenti():
 
 def _salva_utenti(d):
     USERS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+
+
+
+def _nuovo_captcha():
+    """Domanda semplice anti-bot (somma), salvata in sessione."""
+    a = random.randint(2, 12)
+    b = random.randint(1, 9)
+    session["captcha_sum"] = a + b
+    return f"{a} + {b}"
+
+
+def _verifica_captcha(risposta):
+    try:
+        atteso = session.pop("captcha_sum", None)
+        if atteso is None:
+            return False
+        return int(str(risposta).strip()) == int(atteso)
+    except Exception:
+        session.pop("captcha_sum", None)
+        return False
 
 
 def _smtp_conf():
@@ -338,23 +359,27 @@ def _jsonable(obj):
 def login():
     err = ""
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip()
-        pw = (request.form.get("password") or "").strip()
-        email_l = email.lower()
-        if email == ADMIN_USER and pw == ADMIN_PASS:
-            session["ok"] = True
-            session["email"] = ADMIN_USER
-            session["ruolo"] = "admin"
-            return redirect(url_for("home"))
-        users = _utenti()
-        rec = users.get(email_l)
-        if rec and check_password_hash(rec.get("hash", ""), pw):
-            session["ok"] = True
-            session["email"] = email_l
-            session["ruolo"] = "guest"
-            return redirect(url_for("home"))
-        err = "Email o password errati"
-    return render_template("login.html", errore=err)
+        if not _verifica_captcha(request.form.get("captcha")):
+            err = "Verifica anti-bot non corretta. Riprova."
+        else:
+            email = (request.form.get("email") or "").strip()
+            pw = (request.form.get("password") or "").strip()
+            email_l = email.lower()
+            if email == ADMIN_USER and pw == ADMIN_PASS:
+                session["ok"] = True
+                session["email"] = ADMIN_USER
+                session["ruolo"] = "admin"
+                return redirect(url_for("home"))
+            users = _utenti()
+            rec = users.get(email_l)
+            if rec and check_password_hash(rec.get("hash", ""), pw):
+                session["ok"] = True
+                session["email"] = email_l
+                session["ruolo"] = "guest"
+                return redirect(url_for("home"))
+            err = "Email o password errati"
+    domanda = _nuovo_captcha()
+    return render_template("login.html", errore=err, captcha_domanda=domanda)
 
 
 
@@ -456,7 +481,7 @@ def register():
                     session["email"] = email
                     session["ruolo"] = "guest"
                     return redirect(url_for("home"))
-    return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE)
+    return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE, captcha_domanda=_nuovo_captcha())
 
 
 @app.route("/logout")
