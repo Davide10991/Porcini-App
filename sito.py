@@ -444,6 +444,45 @@ def _jsonable(obj):
 
 
 
+
+@app.route("/robots.txt")
+def robots():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Allow: /login\n"
+        "Allow: /register\n"
+        "Allow: /privacy\n"
+        "Allow: /termini\n"
+        "Allow: /cookie\n"
+        "Disallow: /api/\n"
+        "Disallow: /admin/\n"
+        "Sitemap: https://boletusmap.it/sitemap.xml\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/sitemap.xml")
+def sitemap():
+    urls = [
+        "https://boletusmap.it/",
+        "https://boletusmap.it/login",
+        "https://boletusmap.it/register",
+        "https://boletusmap.it/privacy",
+        "https://boletusmap.it/termini",
+        "https://boletusmap.it/cookie",
+    ]
+    items = "".join(
+        f"<url><loc>{u}</loc><changefreq>weekly</changefreq></url>" for u in urls
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        + items + "</urlset>"
+    )
+    return Response(xml, mimetype="application/xml")
+
+
 @app.route("/privacy")
 def privacy():
     return render_template("privacy.html")
@@ -475,7 +514,7 @@ def login():
                 session["ok"] = True
                 session["email"] = ADMIN_USER
                 session["ruolo"] = "admin"
-                return redirect(_safe_next() or url_for("home"))
+                return redirect(_safe_next() or url_for("mappa"))
             # 2) email admin (davidemenna3@gmail.com, ecc.)
             if _is_admin_email(email_l):
                 ok_pw = (pw == ADMIN_PASS)
@@ -485,13 +524,13 @@ def login():
                     session["ok"] = True
                     session["email"] = email_l
                     session["ruolo"] = "admin"
-                    return redirect(_safe_next() or url_for("home"))
+                    return redirect(_safe_next() or url_for("mappa"))
             # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
                 session["ok"] = True
                 session["email"] = email_l
                 session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
-                return redirect(_safe_next() or url_for("home"))
+                return redirect(_safe_next() or url_for("mappa"))
             err = "Email o password errati"
     domanda = _nuovo_captcha()
     return render_template(
@@ -662,7 +701,7 @@ def register():
                     session["ok"] = True
                     session["email"] = email
                     session["ruolo"] = "guest"
-                    return redirect(url_for("home"))
+                    return redirect(url_for("mappa"))
     return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE, captcha_domanda=_nuovo_captcha())
 
 
@@ -673,8 +712,15 @@ def logout():
 
 
 @app.route("/")
-@login_required
 def home():
+    if session.get("ok"):
+        return redirect(url_for("mappa"))
+    return render_template("homepage.html")
+
+
+@app.route("/mappa")
+@login_required
+def mappa():
     # promuovi admin se email in lista
     if _is_admin_email(session.get("email")):
         session["ruolo"] = "admin"
