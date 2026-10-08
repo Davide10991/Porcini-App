@@ -3047,6 +3047,32 @@ def _pluvio_morto(df):
 
 
 
+
+def _serie_inaffidabile(df, fonte=""):
+    """True se la serie non è usabile (outlier, cumulativi, WC spazzatura)."""
+    if df is None or len(df) < 5 or "precip" not in getattr(df, "columns", []):
+        return True
+    try:
+        if getattr(df, "attrs", {}).get("inaffidabile"):
+            return True
+    except Exception:
+        pass
+    p = pd.to_numeric(df["precip"], errors="coerce").fillna(0.0)
+    # giorno >= 100 mm dopo sanifica = quasi sempre errore
+    if float(p.max()) >= 100.0:
+        return True
+    # troppi giorni estremi
+    if int((p >= 60.0).sum()) >= 3:
+        return True
+    fonte_l = (fonte or "").lower()
+    # WeatherCloud: più severo (spesso dati sballati)
+    if "weathercloud" in fonte_l or "weather cloud" in fonte_l:
+        if float(p.max()) >= 50.0:
+            return True
+        if float(p.sum()) > 250 and int((p >= 0.2).sum()) <= 4:
+            return True
+    return False
+
 def _sanifica_precip_df(df):
     """Corregge serie buggate: cumulativi letti come giornalieri, outlier assurdì (>150 mm/g)."""
     if df is None or len(df) == 0 or "precip" not in getattr(df, "columns", []):
@@ -3071,6 +3097,12 @@ def _sanifica_precip_df(df):
             p = d["precip"].astype(float).values
     # tetto giornaliero realistico (sensori/unità sbagliate o cumulativi restanti)
     d["precip"] = d["precip"].clip(lower=0.0, upper=120.0)
+    # se ha colpito il tetto 120 → sensore inaffidabile (segna il df)
+    try:
+        if float(d["precip"].max()) >= 119.5:
+            d.attrs["inaffidabile"] = True
+    except Exception:
+        pass
     return d
 
 
@@ -3503,6 +3535,8 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         df = _sanifica_precip_df(df)
         if _pluvio_morto(df):
             return -1
+        if _serie_inaffidabile(df):
+            return -1
         p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
         umidi = int((p >= 0.4).sum())
         tot = float(p.sum())
@@ -3807,6 +3841,11 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
 
     # ---- scegli la migliore stazione ----
     candidati = [c for c in candidati if c.get("score", -1) >= 0 and c.get("df") is not None]
+    # scarta serie inaffidabili (es. WC con 120 mm/giorno)
+    candidati = [
+        c for c in candidati
+        if not _serie_inaffidabile(c.get("df"), str((c.get("info") or {}).get("fonte") or ""))
+    ]
 
     def _dist(c):
         try:
@@ -3822,6 +3861,23 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             return float(pd.to_numeric(df0["precip"], errors="coerce").fillna(0).sum())
         except Exception:
             return None
+
+
+    # Affidabilità reti: CF e FM/WU sopra, WeatherCloud sotto
+    for c in candidati:
+        fonte = str((c.get("info") or {}).get("fonte") or "").lower()
+        b = 0.0
+        if "caput frigoris" in fonte or "caput" in fonte:
+            b += 6.0  # preferisci CF se entro 5 km e dati usabili
+        if "funghimagazine" in fonte or fonte.startswith("fm"):
+            b += 5.0
+        if "wunderground" in fonte:
+            b += 3.0
+        if "meteonetwork" in fonte and "mappa" not in fonte:
+            b += 1.0
+        if "weathercloud" in fonte or "weather cloud" in fonte:
+            b -= 8.0  # WC solo se non c'è nulla di meglio
+        c["score"] = float(c.get("score") or 0) + b
 
     # Riferimento FM: media mm delle candidate FM/WU verificate (se ci sono)
     ref_fm = None
@@ -3871,7 +3927,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     df = None
     info = None
     if candidati:
+        # Preferenza finale: Caput Frigoris entro 5 km batte la mappa MN
+        def _is_mappa(c):
+            f = str((c.get("info") or {}).get("fonte") or "").lower()
+            return "mappa" in f or bool((c.get("info") or {}).get("stima_mappa"))
+        def _is_cf(c):
+            f = str((c.get("info") or {}).get("fonte") or "").lower()
+            return "caput" in f
+        non_mappa = [c for c in candidati if not _is_mappa(c)]
+        if non_mappa:
+            cf_ok = [c for c in non_mappa if _is_cf(c) and _dist(c) <= 5.0]
+            if cf_ok:
+                cf_ok.sort(key=lambda c: (_dist(c), -float(c.get("score") or 0)))
+                candidati = cf_ok + [c for c in candidati if c not in cf_ok]
+            else:
+                # altrimenti qualsiasi stazione reale (non mappa), più vicina / score
+                non_mappa.sort(key=lambda c: (-float(c.get("score") or 0), _dist(c)))
+                candidati = non_mappa + [c for c in candidati if c not in non_mappa]
         best = candidati[0]
+
         df = best["df"]
         info = best["info"]
         if info is not None and confronto_reti:
