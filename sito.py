@@ -712,10 +712,13 @@ def logout():
 
 
 @app.route("/")
+@app.route("/home")
 def home():
-    if session.get("ok"):
-        return redirect(url_for("mappa"))
-    return render_template("homepage.html")
+    # Sempre visibile, anche da loggati (Google e visitatori devono poterla leggere).
+    return render_template(
+        "homepage.html",
+        loggato=bool(session.get("ok")),
+    )
 
 
 @app.route("/mappa")
