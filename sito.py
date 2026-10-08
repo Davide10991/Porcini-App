@@ -111,13 +111,26 @@ def _invia_registrazione(dest):
     cfg = _smtp_conf()
     if not cfg.get("user") or not cfg.get("password"):
         return False
-    msg = MIMEText(
-        "Ciao,\n\nla registrazione a Boletus Map è andata a buon fine.\n"
-        f"Account: {dest}\n\nBuone cercate.\n",
-        "plain",
-        "utf-8",
+    corpo = (
+        f"Ciao,\n\n"
+        f"benvenuto su Boletus Map.\n\n"
+        f"La tua registrazione è andata a buon fine.\n\n"
+        f"Dati account\n"
+        f"-----------\n"
+        f"Email: {dest}\n\n"
+        f"Cosa puoi fare\n"
+        f"--------------\n"
+        f"- Consultare la mappa delle zone a porcini in Italia\n"
+        f"- Vedere lo stato delle buttate (alta / media / bassa)\n"
+        f"- Cliccare un punto o cercare un bosco per il dettaglio pioggia e nascite\n"
+        f"- Usare Radar PC, Mappe MN e la tabella delle zone\n\n"
+        f"Accedi con questa email e la password scelta in fase di registrazione.\n\n"
+        f"Se non sei stato tu a registrarti, ignora pure questo messaggio.\n\n"
+        f"Buone cercate,\n"
+        f"Il team Boletus Map\n"
     )
-    msg["Subject"] = "Registrazione Boletus Map"
+    msg = MIMEText(corpo, "plain", "utf-8")
+    msg["Subject"] = "Benvenuto su Boletus Map — registrazione confermata"
     msg["From"] = cfg.get("from") or cfg["user"]
     msg["To"] = dest
     with smtplib.SMTP(cfg["host"], int(cfg.get("port") or 587), timeout=20) as s:
