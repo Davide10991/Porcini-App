@@ -256,19 +256,15 @@ def login():
 @app.route("/register/richiedi-codice", methods=["POST"])
 def richiedi_codice():
     email = (request.form.get("email") or "").strip().lower()
-    err = ""
-    ok = ""
+    # Solo richiesta codice: non confondere con la registrazione
     if not email or "@" not in email:
-        err = "Inserisci prima la tua email, poi clicca Richiedi codice invito"
-    else:
-        try:
-            if _invia_richiesta_codice(email):
-                ok = "Richiesta inviata. Ti contatteremo con il codice di invito."
-            else:
-                err = "Invio non configurato. Riprova più tardi."
-        except Exception:
-            err = "Impossibile inviare la richiesta. Riprova più tardi."
-    return render_template("register.html", errore=err, ok_richiesta=ok)
+        return jsonify(ok=False, errore="Inserisci prima la tua email, poi clicca Richiedi codice invito")
+    try:
+        if _invia_richiesta_codice(email):
+            return jsonify(ok=True, messaggio="Richiesta inviata. Ti contatteremo con il codice di invito.")
+        return jsonify(ok=False, errore="Invio non configurato. Riprova più tardi.")
+    except Exception:
+        return jsonify(ok=False, errore="Impossibile inviare la richiesta. Riprova più tardi.")
 
 
 @app.route("/register", methods=["GET", "POST"])
