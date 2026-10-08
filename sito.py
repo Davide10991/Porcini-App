@@ -253,7 +253,7 @@ def _invia_mail(dest, oggetto, corpo_testo, corpo_html=None):
     return True
 
 
-def _html_mail(titolo, paragrafi, footer="Buone cercate,<br>Il team Boletus Map"):
+def _html_mail(titolo, paragrafi, footer="Buonq cerca,<br>Il team Boletus Map"):
     body = "".join(f"<p style=\"margin:0 0 12px;line-height:1.5\">{p}</p>" for p in paragrafi)
     return f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#1a1008;font-family:Segoe UI,Helvetica,Arial,sans-serif">
@@ -278,7 +278,7 @@ def _invia_codice_a_utente(email, codice):
         f"    {codice}\n\n"
         f"Registrati su Boletus Map inserendo questo codice.\n"
         f"Il codice funziona una sola volta e solo per: {email}\n\n"
-        f"Buone cercate,\n"
+        f"Buona cerca,\n"
         f"Il team Boletus Map\n"
     )
     html = _html_mail(
@@ -354,7 +354,7 @@ def _invia_registrazione(dest):
         f"e cercare boschi o punti sulla mappa.\n\n"
         f"Accedi con questa email e la password scelta in registrazione.\n\n"
         f"Se non sei stato tu a registrarti, ignora questo messaggio.\n\n"
-        f"Buone cercate,\n"
+        f"Buona cerca,\n"
         f"Il team Boletus Map\n"
     )
     html = _html_mail(
