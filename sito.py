@@ -781,7 +781,9 @@ def register_prova():
         err = "Le password non coincidono"
     else:
         users = _utenti()
-        if email in users:
+        if request.cookies.get("prova_usata") == "1":
+            err = "La prova è già stata usata su questo browser. Per continuare serve il codice invito."
+        elif email in users:
             err = "Questa email è già registrata. La prova si può usare una sola volta."
         else:
             scad = _ora_roma().replace(tzinfo=None) + timedelta(days=2)
@@ -800,7 +802,9 @@ def register_prova():
             session["email"] = email
             session["ruolo"] = "guest"
             session["piano"] = "prova"
-            return redirect(url_for("mappa"))
+            resp = redirect(url_for("mappa"))
+            resp.set_cookie("prova_usata", "1", max_age=60*60*24*400, httponly=True, samesite="Lax")
+            return resp
     return render_template(
         "register.html",
         errore=err,
