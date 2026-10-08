@@ -344,6 +344,39 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
     return True
 
 
+
+def _invia_prova(dest, scadenza):
+    quando = ""
+    try:
+        quando = datetime.fromisoformat(scadenza).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        quando = str(scadenza)
+    testo = (
+        f"Ciao,\n\n"
+        f"la prova di Boletus Map è attiva.\n\n"
+        f"Account: {dest}\n"
+        f"Il tuo account scadrà tra due giorni, il {quando}.\n\n"
+        f"Dopo quella data l'accesso alla mappa si blocca.\n"
+        f"Per tenerlo per sempre, dona almeno 10 euro e inserisci il codice invito "
+        f"nella pagina di upgrade, con la stessa email. Non devi rifare la registrazione.\n\n"
+        f"Dona: {PAYPAL_DONATE}\n"
+        f"Upgrade: https://boletusmap.it/upgrade\n\n"
+        f"Buona cerca,\nIl team Boletus Map\n"
+    )
+    html = _html_mail(
+        "Prova attiva — scade tra due giorni",
+        [
+            "La prova di <b>Boletus Map</b> è attiva.",
+            f"<b>Account:</b> {dest}",
+            f"<b>Il tuo account scadrà tra due giorni</b>, il {quando}. Dopo quella data l'accesso alla mappa non funziona più.",
+            "Per passare all'account senza scadenza, dona almeno 10 € e inserisci il codice invito nella pagina di upgrade, con la stessa email. Non devi rifare la registrazione.",
+            f'<a href="{PAYPAL_DONATE}" style="display:inline-block;margin-top:8px;padding:12px 16px;background:#c4783a;color:#1a1008;text-decoration:none;border-radius:10px;font-weight:700">Fai l\'upgrade — dona 10 €</a>',
+            'Poi apri <a href="https://boletusmap.it/upgrade" style="color:#c4783a">boletusmap.it/upgrade</a> e inserisci email, password e codice.',
+        ],
+    )
+    return _invia_mail(dest, "Boletus Map — la prova scade tra due giorni", testo, html)
+
+
 def _invia_registrazione(dest):
     testo = (
         f"Ciao,\n\n"
@@ -699,6 +732,37 @@ def admin_approva_codice():
 
 
 
+
+@app.route("/upgrade", methods=["GET", "POST"])
+def upgrade():
+    err = ""
+    ok = ""
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        pw = (request.form.get("password") or "").strip()
+        codice = (request.form.get("codice") or "").strip()
+        users = _utenti()
+        rec = users.get(email)
+        if not rec or not check_password_hash(rec.get("hash", ""), pw):
+            err = "Email o password errati"
+        else:
+            ok_c, err_c = _consuma_codice(codice, email)
+            if not ok_c:
+                err = err_c
+            else:
+                rec["piano"] = "intero"
+                rec.pop("scadenza", None)
+                rec["codice_usato"] = codice
+                users[email] = rec
+                _salva_utenti(users)
+                session["ok"] = True
+                session["email"] = email
+                session["ruolo"] = "admin" if _is_admin_email(email) else "guest"
+                session["piano"] = "intero"
+                return redirect(url_for("mappa"))
+    return render_template("upgrade.html", errore=err, paypal_url=PAYPAL_DONATE)
+
+
 @app.route("/register/prova", methods=["POST"])
 def register_prova():
     err = ""
@@ -729,7 +793,7 @@ def register_prova():
             }
             _salva_utenti(users)
             try:
-                _invia_registrazione(email)
+                _invia_prova(email, users[email]["scadenza"])
             except Exception:
                 pass
             session["ok"] = True
