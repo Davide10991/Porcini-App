@@ -636,6 +636,36 @@ def richiedi_codice():
 
 
 
+
+@app.route("/admin/utenti", methods=["GET", "POST"])
+@login_required
+def admin_utenti():
+    if not _is_admin_email(session.get("email")) and session.get("ruolo") != "admin":
+        return redirect(url_for("mappa"))
+    msg = ""
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        users = _utenti()
+        if _is_admin_email(email):
+            msg = "L'account admin non si cancella da qui."
+        elif email in users:
+            users.pop(email, None)
+            _salva_utenti(users)
+            msg = f"Cancellato {email}"
+        else:
+            msg = "Account non trovato"
+    righe = []
+    for email, rec in _utenti().items():
+        righe.append({
+            "email": email,
+            "piano": rec.get("piano") or "intero",
+            "scadenza": rec.get("scadenza") or "senza scadenza",
+            "quando": rec.get("quando") or "",
+        })
+    righe.sort(key=lambda r: r["email"])
+    return render_template("admin_utenti.html", righe=righe, msg=msg)
+
+
 @app.route("/admin/codici")
 @login_required
 def admin_codici():
@@ -908,12 +938,20 @@ def mappa():
         }
         for p in engine.PUNTI
     ]
+    rec = _utenti().get((session.get("email") or "").strip().lower()) or {}
+    scadenza_prova = ""
+    if rec.get("piano") == "prova" and rec.get("scadenza"):
+        try:
+            scadenza_prova = datetime.fromisoformat(rec["scadenza"]).strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            scadenza_prova = rec.get("scadenza")
     return render_template(
         "index.html",
         n_punti=len(engine.PUNTI),
         regioni=sorted({p["regione"] for p in engine.PUNTI}),
         ruolo=ruolo,
         email=session.get("email", ""),
+        scadenza_prova=scadenza_prova,
         boschi_json=boschi,
         richieste_codici=richieste,
         approve_key=ADMIN_APPROVE_KEY if ruolo == "admin" else "",
