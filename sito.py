@@ -377,6 +377,24 @@ def _invia_prova(dest, scadenza):
     return _invia_mail(dest, "Boletus Map — la prova scade tra due giorni", testo, html)
 
 
+
+def _invia_verifica(dest, token):
+    link = f"https://boletusmap.it/verifica/{token}"
+    testo = (
+        f"Ciao,\n\nconferma il tuo account Boletus Map aprendo questo link:\n{link}\n\n"
+        f"Se non sei stato tu, ignora questo messaggio.\n\nBuona cerca,\nIl team Boletus Map\n"
+    )
+    html = _html_mail(
+        "Conferma la tua email",
+        [
+            "Per attivare l'account apri questo link:",
+            f'<a href="{link}" style="display:inline-block;margin-top:8px;padding:12px 16px;background:#c4783a;color:#1a1008;text-decoration:none;border-radius:10px;font-weight:700">Conferma email</a>',
+            "Se non sei stato tu, ignora questo messaggio.",
+        ],
+    )
+    return _invia_mail(dest, "Boletus Map — conferma la tua email", testo, html)
+
+
 def _invia_registrazione(dest):
     testo = (
         f"Ciao,\n\n"
@@ -564,6 +582,24 @@ def nascite():
 def cookie():
     return render_template("cookie.html")
 
+
+@app.route("/verifica/<token>")
+def verifica_email(token):
+    users = _utenti()
+    for email, rec in users.items():
+        if rec.get("verifica_token") == token:
+            rec["verificato"] = True
+            rec.pop("verifica_token", None)
+            users[email] = rec
+            _salva_utenti(users)
+            session["ok"] = True
+            session["email"] = email
+            session["ruolo"] = "admin" if _is_admin_email(email) else "guest"
+            session["piano"] = rec.get("piano") or "intero"
+            return redirect(url_for("mappa"))
+    return render_template("login.html", errore="Link di conferma non valido o già usato.", captcha_domanda=_nuovo_captcha(), next_url="")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     err = ""
@@ -594,7 +630,9 @@ def login():
                     return redirect(_safe_next() or url_for("mappa"))
             # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
-                if _prova_scaduta(email_l):
+                if rec.get("verificato") is False:
+                    err = "Email non ancora confermata. Apri il link che ti abbiamo inviato."
+                elif _prova_scaduta(email_l):
                     err = "Prova di 2 giorni scaduta. Per continuare serve il codice invito."
                 else:
                     session["ok"] = True
@@ -834,11 +872,15 @@ def register_prova():
                 _invia_prova(email, users[email]["scadenza"])
             except Exception:
                 pass
-            session["ok"] = True
-            session["email"] = email
-            session["ruolo"] = "guest"
-            session["piano"] = "prova"
-            resp = redirect(url_for("mappa"))
+            token = secrets.token_urlsafe(24)
+            users[email]["verificato"] = False
+            users[email]["verifica_token"] = token
+            _salva_utenti(users)
+            try:
+                _invia_verifica(email, token)
+            except Exception:
+                pass
+            resp = redirect(url_for("register", inviata="1"))
             resp.set_cookie("prova_usata", "1", max_age=60*60*24*400, httponly=True, samesite="Lax")
             return resp
     return render_template(
@@ -875,20 +917,20 @@ def register():
                 if not ok_c:
                     err = err_c
                 else:
+                    token = secrets.token_urlsafe(24)
                     users[email] = {
                         "hash": generate_password_hash(pw),
                         "quando": datetime.now().isoformat(timespec="seconds"),
                         "codice_usato": codice,
+                        "verificato": False,
+                        "verifica_token": token,
                     }
                     _salva_utenti(users)
                     try:
-                        _invia_registrazione(email)
+                        _invia_verifica(email, token)
                     except Exception:
                         pass
-                    session["ok"] = True
-                    session["email"] = email
-                    session["ruolo"] = "guest"
-                    return redirect(url_for("mappa"))
+                    return redirect(url_for("register", inviata="1"))
     return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE, captcha_domanda=_nuovo_captcha())
 
 
