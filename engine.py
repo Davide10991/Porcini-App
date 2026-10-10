@@ -1108,8 +1108,8 @@ def mn_prec_da_mappa(lat, lon, giorno):
         v = float(v)
     except Exception:
         return 0.0
-    # 0.1–2.0 mm ripetuti ogni giorno = artefatto legenda/sfondo, non pioggia reale
-    if v < 2.5:
+    # sotto 0.8 mm = rumore di pixel; i giorni di pioggia vera restano
+    if v < 0.8:
         return 0.0
     return round(v, 1)
 
@@ -1262,7 +1262,7 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         except Exception:
             mm = None
         if mm is None:
-            continue
+            mm = 0.0
         tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
         tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
         vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
@@ -3985,25 +3985,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 giorni = []
                 tmp = df.copy()
                 tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
-                for _, row in tmp[tmp["_p"] >= 0.2].sort_values("date").iterrows():
+                for _, row in tmp[tmp["_p"] >= 0.8].sort_values("date").iterrows():
                     giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
                 if not giorni:
                     if mm_m < 0.5:
-                        giorni = ["mappa MN: 0 mm sul pixel del bosco (lettura debole o zona senza segnale)"]
+                        giorni = ["mappa MN: 0 mm sul pixel del bosco"]
                     else:
-                        giorni = [f"mappa MN: totale {round(mm_m,1)} mm (nessun giorno ≥0.2 mm elencato)"]
+                        giorni = [f"mappa MN: totale {round(mm_m,1)} mm"]
                 info = {
                     "fonte": "Mappa giornaliera MeteoNetwork",
                     "stazione": "pixel mappa MN",
                     "distanza_km": 0,
                     "quota_stazione": None,
                     "pioggia_stazione_30g": round(mm_m, 1),
-                    "giorni_pluviometro": giorni[-20:],
+                    "giorni_pluviometro": giorni,
                     "stima_mappa": True,
                 }
         except Exception:
             pass
-        if df is None or _pluvio_morto(df):
+        if df is None:
             try:
                 dpc = dpc_serie_giorni(lat, lon, giorni=min(days, 20))
                 if dpc is not None and len(dpc) >= 8 and not _pluvio_morto(dpc):

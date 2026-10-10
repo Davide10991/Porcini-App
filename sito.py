@@ -36,6 +36,7 @@ import engine
 
 app = Flask(__name__)
 app.secret_key = "boletus-map-porcino-2026"
+app.permanent_session_lifetime = timedelta(days=30)
 ADMIN_USER = "Davide1099"  # login admin classico (username)
 ADMIN_PASS = "Ciccione99"
 # email con privilegi admin (login con password account o ADMIN_PASS)
@@ -534,6 +535,8 @@ def robots():
         "Allow: /privacy\n"
         "Allow: /termini\n"
         "Allow: /cookie\n"
+        "Allow: /faq\n"
+        "Allow: /contatti\n"
         "Allow: /nascite\n"
         "Disallow: /api/\n"
         "Disallow: /admin/\n"
@@ -551,6 +554,8 @@ def sitemap():
         "https://boletusmap.it/privacy",
         "https://boletusmap.it/termini",
         "https://boletusmap.it/cookie",
+        "https://boletusmap.it/faq",
+        "https://boletusmap.it/contatti",
         "https://boletusmap.it/nascite",
     ]
     items = "".join(
@@ -577,6 +582,14 @@ def termini():
 @app.route("/nascite")
 def nascite():
     return render_template("nascite.html")
+
+@app.route("/faq")
+def faq():
+    return render_template("faq.html")
+
+@app.route("/contatti")
+def contatti():
+    return render_template("contatti.html")
 
 @app.route("/cookie")
 def cookie():
@@ -617,6 +630,7 @@ def login():
                 session["ok"] = True
                 session["email"] = ADMIN_USER
                 session["ruolo"] = "admin"
+                session.permanent = bool(request.form.get("ricorda"))
                 return redirect(_safe_next() or url_for("mappa"))
             # 2) email admin (davidemenna3@gmail.com, ecc.)
             if _is_admin_email(email_l):
@@ -627,6 +641,7 @@ def login():
                     session["ok"] = True
                     session["email"] = email_l
                     session["ruolo"] = "admin"
+                    session.permanent = bool(request.form.get("ricorda"))
                     return redirect(_safe_next() or url_for("mappa"))
             # 3) utente normale
             if rec and check_password_hash(rec.get("hash", ""), pw):
@@ -639,6 +654,7 @@ def login():
                     session["email"] = email_l
                     session["ruolo"] = "admin" if _is_admin_email(email_l) else "guest"
                     session["piano"] = rec.get("piano") or "intero"
+                    session.permanent = bool(request.form.get("ricorda"))
                     return redirect(_safe_next() or url_for("mappa"))
             if not err:
                 err = "Email o password errati"
