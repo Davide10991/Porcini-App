@@ -911,15 +911,13 @@ MN_ZONE = [
     ("marche", 42.70, 44.00, 12.30, 14.00),
     ("umbria", 42.35, 43.65, 11.85, 13.30),
     ("toscana", 42.20, 44.50, 9.60, 12.40),
-    ("puglia", 39.70, 42.20, 14.90, 18.60),
-    ("basilicata", 39.85, 41.15, 15.30, 16.90),
+    ("puglia_basilicata", 39.70, 42.20, 14.90, 18.60),
     ("calabria", 37.85, 40.15, 15.50, 17.25),
     ("sicilia", 36.55, 38.35, 12.30, 15.70),
     ("sardegna", 38.80, 41.35, 8.10, 9.90),
-    ("emilia", 43.70, 45.15, 9.20, 12.80),
+    ("emilia_romagna", 43.70, 45.15, 9.20, 12.80),
     ("lombardia", 44.60, 46.65, 8.40, 11.50),
-    ("veneto", 44.70, 46.70, 10.60, 13.10),
-    ("friuli", 45.55, 46.70, 12.30, 13.80),
+    ("triveneto", 44.70, 46.70, 10.60, 13.80),
     ("piemonte", 44.05, 46.50, 6.60, 9.30),
     ("liguria", 43.70, 44.70, 7.40, 10.10),
     ("trentino", 45.60, 47.10, 10.40, 12.50),
@@ -4024,27 +4022,25 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             pass
 
-    # ---- 5) Zone scoperte: mappa giornaliera MeteoNetwork (poi DPC/ICON) ----
+    # ---- 5) Nessuna stazione entro 5 km: SOLO mappa regionale MN ----
     if df is None or _pluvio_morto(df):
         try:
+            zona, *_ = _mn_zona(lat, lon)
             mappa = mn_pioggia_mappa(lat, lon, 15) or {}
             mdf = mappa.get("df")
             mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
-            if mdf is not None and len(mdf) >= 5:
+            if mdf is not None and len(mdf) >= 1:
                 df = mdf.copy()
                 giorni = []
                 tmp = df.copy()
                 tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
-                for _, row in tmp[tmp["_p"] >= 0.8].sort_values("date").iterrows():
+                for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
                     giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
                 if not giorni:
-                    if mm_m < 0.5:
-                        giorni = ["mappa MN: 0 mm sul pixel del bosco"]
-                    else:
-                        giorni = [f"mappa MN: totale {round(mm_m,1)} mm"]
+                    giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
                 info = {
-                    "fonte": "Mappa giornaliera MeteoNetwork",
-                    "stazione": "pixel mappa MN",
+                    "fonte": f"Mappa giornaliera MeteoNetwork · {zona}",
+                    "stazione": f"mappa {zona}",
                     "distanza_km": 0,
                     "quota_stazione": None,
                     "pioggia_stazione_30g": round(mm_m, 1),
@@ -4103,7 +4099,10 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     if mm > 150:
                         continue
                     gg.append(f"{str(row.get('date'))[:10]}: {mm:.1f} mm")
-                info["giorni_pluviometro"] = gg[-20:]
+                if gg:
+                    info["giorni_pluviometro"] = gg
+                elif not info.get("giorni_pluviometro"):
+                    info["giorni_pluviometro"] = [f"mappa: {tot} mm in 30 giorni"]
         except Exception:
             pass
         vento = riepilogo_vento(df)
