@@ -5063,7 +5063,10 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
                 tenuti.append(g)
                 continue
             data = gs.split(":")[0].strip()[:10]
-            if len(data) >= 10 and data[:10] >= taglio:
+            if len(data) < 10 or not data[:4].isdigit():
+                tenuti.append(g)
+                continue
+            if data[:10] >= taglio:
                 tenuti.append(g)
         info_meteo["giorni_pluviometro"] = tenuti
     if (df is None or len(df) == 0) and (info_meteo.get("giorni_pluviometro") or []):
@@ -5091,9 +5094,15 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
             taglio = pd.Timestamp(datetime.now().date() - timedelta(days=30))
             tmp = tmp[(tmp["date"].notna()) & (tmp["date"] >= taglio) & (tmp["_p"] >= 0.2)]
             tmp = tmp.sort_values("date")
-            info_meteo["giorni_pluviometro"] = [
+            gg = [
                 f"{row['date'].date()}: {float(row['_p']):.1f} mm" for _, row in tmp.iterrows()
             ]
+            if gg:
+                info_meteo["giorni_pluviometro"] = gg
+            elif not info_meteo.get("giorni_pluviometro"):
+                info_meteo["giorni_pluviometro"] = [
+                    f"mappa: {info_meteo.get('pioggia_stazione_30g') or 0} mm in 30 giorni"
+                ]
         except Exception:
             pass
     try:
