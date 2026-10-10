@@ -901,6 +901,56 @@ MN_WIND_PALETTE = [
 ]
 
 
+
+# Mappe giornaliere MN: regionale se c'è, altrimenti nord/centro/sud, poi Italia.
+MN_ZONE = [
+    ("molise", 41.35, 42.08, 13.90, 15.20),
+    ("abruzzo", 41.60, 42.95, 13.00, 14.85),
+    ("lazio", 41.20, 42.85, 11.40, 14.05),
+    ("campania", 39.95, 41.55, 13.70, 15.85),
+    ("marche", 42.70, 44.00, 12.30, 14.00),
+    ("umbria", 42.35, 43.65, 11.85, 13.30),
+    ("toscana", 42.20, 44.50, 9.60, 12.40),
+    ("puglia", 39.70, 42.20, 14.90, 18.60),
+    ("basilicata", 39.85, 41.15, 15.30, 16.90),
+    ("calabria", 37.85, 40.15, 15.50, 17.25),
+    ("sicilia", 36.55, 38.35, 12.30, 15.70),
+    ("sardegna", 38.80, 41.35, 8.10, 9.90),
+    ("emilia", 43.70, 45.15, 9.20, 12.80),
+    ("lombardia", 44.60, 46.65, 8.40, 11.50),
+    ("veneto", 44.70, 46.70, 10.60, 13.10),
+    ("friuli", 45.55, 46.70, 12.30, 13.80),
+    ("piemonte", 44.05, 46.50, 6.60, 9.30),
+    ("liguria", 43.70, 44.70, 7.40, 10.10),
+    ("trentino", 45.60, 47.10, 10.40, 12.50),
+]
+MN_FRAME = {
+    # x0,x1,y0,y1 nel PNG regionale (1288 circa)
+    "default": (50, 1080, 40, 900),
+}
+
+
+def _mn_zona(lat, lon):
+    for nome, la0, la1, lo0, lo1 in MN_ZONE:
+        if la0 <= lat <= la1 and lo0 <= lon <= lo1:
+            return nome, la0, la1, lo0, lo1
+    if lat >= 44.3:
+        return "nord", 44.0, 47.2, 6.5, 13.8
+    if lat <= 41.2:
+        return "sud", 36.5, 41.6, 12.5, 18.6
+    return "centro", 40.8, 44.2, 10.5, 15.5
+
+
+def _mn_png_xy_zona(lat, lon, w, h, zona, bounds):
+    la0, la1, lo0, lo1 = bounds
+    x0, x1, y0, y1 = MN_FRAME["default"]
+    if zona == "italia":
+        return _mn_png_xy(lat, lon, w, h)
+    x = x0 + (float(lon) - lo0) / max(0.01, lo1 - lo0) * (x1 - x0)
+    y = y0 + (la1 - float(lat)) / max(0.01, la1 - la0) * (y1 - y0)
+    return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
+
+
 def _mn_png_xy(lat, lon, w=1026, h=1252):
     x = 50 + (float(lon) - 6.2) / (18.8 - 6.2) * 900
     y = 70 + (47.2 - float(lat)) / (47.2 - 36.5) * 1090
@@ -948,10 +998,8 @@ def _mn_rgb_to_mm(rgb):
     if _mn_e_mare_o_bordo(rgb) or _mn_e_terra_asciutta(rgb):
         return 0.0
     r, g, b = rgb[:3]
-    # legenda / rosso puro / UI: non è pioggia sulla mappa
-    if r > 100 and g < 40 and b < 40:
-        return 0.0
-    if r > 180 and g < 60 and b < 60 and abs(g - b) < 25:
+    # rosso solo se non è un colore della scala pioggia (legenda isolata)
+    if r > 200 and g < 20 and b < 20 and r - g > 180:
         return 0.0
     # match stretto sulla palette
     best, bd = None, 1e9
@@ -983,12 +1031,16 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
     Per la pioggia: nel raggio locale prende il *massimo* tra i pixel terra
     (le mappe interpolate hanno nuclei colorati; un solo pixel può sottostimare).
     """
-    pack = _mn_mappa_px(giorno, variabile)
+    zona, la0, la1, lo0, lo1 = _mn_zona(lat, lon)
+    pack = _mn_mappa_px(giorno, variabile, zona)
+    if not pack and zona != "italia":
+        pack = _mn_mappa_px(giorno, variabile, "italia")
+        zona = "italia"
     if not pack:
         return None
     try:
         w, h, buf = pack
-        x0, y0 = _mn_png_xy(lat, lon, w, h)
+        x0, y0 = _mn_png_xy_zona(lat, lon, w, h, zona, (la0, la1, lo0, lo1))
         if variabile != "prec":
             candidati = [(0, 0)]
             for rad in range(1, 8):
@@ -1029,7 +1081,8 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                     if v is None:
                         continue
                     fv = float(v)
-                    if fv >= 2.5:
+                    # anche 0.5–2 mm è pioggia vera sulla mappa MN (azzurro), non rumore
+                    if fv >= 0.4:
                         out.append(min(80.0, fv))
             return out
 
@@ -1050,11 +1103,12 @@ _MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
 
 
 @st.cache_data(ttl=21600)
-def _mn_mappa_px(giorno, variabile="prec"):
+def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
     """Scarica e decodifica UNA volta la PNG del giorno (disco + RAM)."""
     d = str(giorno)
+    zona = zona or "italia"
     _MAPPE_DIR.mkdir(exist_ok=True)
-    fp = _MAPPE_DIR / f"{d}_{variabile}.bin"
+    fp = _MAPPE_DIR / f"{d}_{variabile}_{zona}.bin"
     if fp.exists() and fp.stat().st_size > 1000:
         try:
             raw = fp.read_bytes()
@@ -1065,7 +1119,7 @@ def _mn_mappa_px(giorno, variabile="prec"):
             pass
     url = (
         "https://cdn1.meteonetwork.it/models/malawi/wnetwork/mappe_daily/"
-        f"{d}/{d}_{variabile}_italia.png"
+        f"{d}/{d}_{variabile}_{zona}.png"
     )
     try:
         r = None
@@ -1108,8 +1162,8 @@ def mn_prec_da_mappa(lat, lon, giorno):
         v = float(v)
     except Exception:
         return 0.0
-    # sotto 0.8 mm = rumore di pixel; i giorni di pioggia vera restano
-    if v < 0.8:
+    # sotto 0.4 mm = fondo mappa; il resto è pioggia da leggere
+    if v < 0.4:
         return 0.0
     return round(v, 1)
 
@@ -1285,12 +1339,8 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
             vc = vals[vals > 0].value_counts()
             if len(vc):
                 top, ntop = float(vc.index[0]), int(vc.iloc[0])
-                if top <= 2.0 and ntop >= max(5, int(0.35 * len(vals))):
-                    vals = vals.where(vals != top, 0.0)
-                if top <= 5.0 and ntop / max(1, len(vals)) >= 0.55:
-                    vals = vals.where(vals != top, 0.0)
-                # stesso valore alto molti giorni (es. 250 o 80) = artefatto
-                if top >= 40.0 and ntop >= 4:
+                # solo i valori assurdi ripetuti (legenda) si azzerano, non la pioggia vera
+                if top >= 80.0 and ntop >= 4:
                     vals = vals.where(vals != top, 0.0)
             df = df.copy()
             df["precip"] = vals.values
