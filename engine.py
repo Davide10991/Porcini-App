@@ -922,10 +922,11 @@ MN_ZONE = [
     ("liguria", 43.70, 44.70, 7.40, 10.10),
     ("trentino", 45.60, 47.10, 10.40, 12.50),
 ]
-MN_FRAME = {
-    # x0,x1,y0,y1 nel PNG regionale (1288 circa)
-    "default": (50, 1080, 40, 900),
-}
+def _mn_frame(w, h, zona):
+    """Area mappa nel PNG: margini e legenda a destra esclusi."""
+    if zona == "italia":
+        return None
+    return (36, max(80, int(w) - 170), 36, max(80, int(h) - 70))
 
 
 def _mn_zona(lat, lon):
@@ -941,9 +942,10 @@ def _mn_zona(lat, lon):
 
 def _mn_png_xy_zona(lat, lon, w, h, zona, bounds):
     la0, la1, lo0, lo1 = bounds
-    x0, x1, y0, y1 = MN_FRAME["default"]
-    if zona == "italia":
+    fr = _mn_frame(w, h, zona)
+    if zona == "italia" or not fr:
         return _mn_png_xy(lat, lon, w, h)
+    x0, x1, y0, y1 = fr
     x = x0 + (float(lon) - lo0) / max(0.01, lo1 - lo0) * (x1 - x0)
     y = y0 + (la1 - float(lat)) / max(0.01, la1 - la0) * (y1 - y0)
     return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
@@ -1085,15 +1087,13 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
             return out
 
         # pixel del punto, poi intorno: un pixel di scarto cade sul fondo chiaro
-        vals = _valori_raggio(3)
+        vals = _valori_raggio(4)
         if not vals:
-            vals = _valori_raggio(8)
+            vals = _valori_raggio(14)
         if not vals:
             return 0.0
         vals.sort()
-        # mediana, ma se intorno c'è pioggia vera non lasciare 0
-        med = vals[len(vals) // 2]
-        return max(med, max(vals) if max(vals) >= 2 else med)
+        return max(vals)
     except Exception:
         return None
 
@@ -1174,6 +1174,14 @@ def mn_prec_da_mappa(lat, lon, giorno):
             if alt_v and float(alt_v) > float(v or 0):
                 v = alt_v
                 break
+        if v is None or float(v or 0) < 0.4:
+            pack = _mn_mappa_px(giorno, "prec", "italia")
+            if pack:
+                w, h, buf = pack
+                x0, y0 = _mn_png_xy(lat, lon, w, h)
+                it_v = _mn_rgb_to_mm(_mn_get_px(buf, w, h, x0, y0))
+                if it_v and float(it_v) > float(v or 0):
+                    v = it_v
     if v is None:
         return None
     try:
