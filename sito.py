@@ -1136,7 +1136,7 @@ def api_punto():
         "pioggia_min": int(body.get("pioggia_min") or 40),
         "pioggia_max": int(body.get("pioggia_max") or 100),
     }
-    r = engine.analizza_punto(p, regole, "", 5.0, "", None, None, True, solo_mappe=True)
+    r = engine.analizza_punto(p, regole, "", 5.0, "", None, None, True)
     return jsonify({"ok": True, "zona": r})
 
 

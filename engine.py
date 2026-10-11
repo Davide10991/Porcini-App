@@ -1101,11 +1101,15 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
 _MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
 
 
-@st.cache_data(ttl=21600)
+_MN_PX = {}
+
 def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
-    """Scarica e decodifica UNA volta la PNG del giorno (disco + RAM)."""
+    """Scarica e decodifica UNA volta la PNG del giorno. I fallimenti non si salvano."""
     d = str(giorno)
     zona = zona or "italia"
+    key = (d, variabile, zona)
+    if key in _MN_PX:
+        return _MN_PX[key]
     _MAPPE_DIR.mkdir(exist_ok=True)
     fp = _MAPPE_DIR / f"v3_{d}_{variabile}_{zona}.bin"
     if fp.exists() and fp.stat().st_size > 1000:
@@ -1113,7 +1117,9 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
             raw = fp.read_bytes()
             w = int.from_bytes(raw[:4], "big")
             h = int.from_bytes(raw[4:8], "big")
-            return (w, h, raw[8:])
+            out = (w, h, raw[8:])
+            _MN_PX[key] = out
+            return out
         except Exception:
             pass
     url = (
@@ -1147,7 +1153,9 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
             fp.write_bytes(im.size[0].to_bytes(4, "big") + im.size[1].to_bytes(4, "big") + buf)
         except Exception:
             pass
-        return (im.size[0], im.size[1], buf)
+        out = (im.size[0], im.size[1], buf)
+        _MN_PX[key] = out
+        return out
     except Exception:
         return None
 
@@ -1183,10 +1191,7 @@ def mn_preload_mappe(giorni=30):
     fatti = 0
     def _one(i):
         g = (oggi - timedelta(days=i)).isoformat()
-        _mn_mappa_px(g, "prec")
-        _mn_mappa_px(g, "temp_min")
-        _mn_mappa_px(g, "temp_max")
-        _mn_mappa_px(g, "wind")
+        _mn_mappa_px(g, "prec", "italia")
     with ThreadPoolExecutor(max_workers=4) as ex:
         for _ in ex.map(_one, range(giorni)):
             fatti += 1
@@ -1312,12 +1317,17 @@ def dpc_serie_giorni(lat, lon, giorni=30, max_workers=5):
     return df
 
 
-@lru_cache(maxsize=512)
+_MN_PIOGGIA = {}
+
 def _mn_pioggia_mappa_cached(lat_r, lon_r):
-    """Cache per punto arrotondato: evita 3-4 download ripetuti sullo stesso bosco."""
+    """Cache per punto. Non salva il risultato se le mappe non si sono scaricate."""
+    key = (int(lat_r), int(lon_r))
+    if key in _MN_PIOGGIA:
+        return _MN_PIOGGIA[key]
     lat, lon = float(lat_r) / 100.0, float(lon_r) / 100.0
     oggi = datetime.now().date()
     rows = []
+    falliti = 0
     for i in range(30):
         g = oggi - timedelta(days=i)
         iso = g.isoformat()
@@ -1326,6 +1336,7 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         except Exception:
             mm = None
         if mm is None:
+            falliti += 1
             mm = 0.0
         rows.append({
             "date": pd.Timestamp(g),
@@ -1361,7 +1372,10 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
             oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0])
     except Exception:
         pass
-    return {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows)}
+    out = {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows), "falliti": falliti}
+    if falliti < 15:
+        _MN_PIOGGIA[key] = out
+    return out
 
 
 def mn_pioggia_mappa(lat, lon, raggio=15):
@@ -1384,6 +1398,7 @@ def mn_pioggia_mappa(lat, lon, raggio=15):
             "oggi_mm": out.get("oggi_mm"),
             "mese_mm": out.get("mese_mm"),
             "n": out.get("n"),
+            "falliti": out.get("falliti") or 0,
         }
     except Exception:
         return out
@@ -3562,9 +3577,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
             for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
                 giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
             if not giorni:
-                giorni = [f"mappa MN: {round(mm_m,1)} mm in 30 giorni"]
+                if int(mappa.get("falliti") or 0) >= 15:
+                    giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30)"]
+                else:
+                    giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
             info = {
-                "fonte": f"Mappa giornaliera MeteoNetwork · {zona}",
+                "fonte": f"Mappa giornaliera MeteoNetwork · {zona}" + (f" · download {30-int(mappa.get('falliti') or 0)}/30" if mappa.get("falliti") is not None else ""),
                 "stazione": f"mappa {zona}",
                 "distanza_km": 0,
                 "quota_stazione": None,
@@ -4032,29 +4050,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         info = best["info"]
         if info is not None and confronto_reti:
             info["confronto_reti"] = confronto_reti
-        # se la mappa MN smentisce la stazione, scarta e prova la successiva
-        try:
-            sm = _mappa_smentisce_stazione(df, lat, lon)
-            if sm is not None and len(candidati) > 1:
-                # scarta la smentita e prendi la più vicina tra le restanti
-                rest = candidati[1:]
-                rest.sort(key=lambda c: float((c.get("info") or {}).get("distanza_km") or 99))
-                best = rest[0]
-                df = best["df"]
-                info = best["info"]
-            elif sm is not None and sm.get("df") is not None:
-                df = sm["df"]
-                info = {
-                    "fonte": "Mappa MeteoNetwork (stazione smentita)",
-                    "stazione": "pixel mappa",
-                    "distanza_km": 0,
-                    "quota_stazione": None,
-                    "pioggia_stazione_30g": sm.get("mese_mm"),
-                    "giorni_pluviometro": [],
-                    "stima_mappa": True,
-                }
-        except Exception:
-            pass
+        # stazione trovata: si tiene. La mappa non la sostituisce.
 
     # ---- 5) Nessuna stazione entro 5 km: SOLO mappa regionale MN ----
     if df is None or _pluvio_morto(df):
@@ -4071,9 +4067,12 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
                     giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
                 if not giorni:
-                    giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
+                    if int(mappa.get("falliti") or 0) >= 15:
+                        giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30)"]
+                    else:
+                        giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
                 info = {
-                    "fonte": f"Mappa giornaliera MeteoNetwork · {zona}",
+                    "fonte": f"Mappa giornaliera MeteoNetwork · {zona}" + (f" · download {30-int(mappa.get('falliti') or 0)}/30" if mappa.get("falliti") is not None else ""),
                     "stazione": f"mappa {zona}",
                     "distanza_km": 0,
                     "quota_stazione": None,
@@ -4990,52 +4989,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
                     vento = riepilogo_vento(df)
     except Exception:
         pass
-    # stazione vs mappa MN sul bosco: se i mm della stazione non ci sono in mappa, uso la mappa
-    try:
-        if df is not None and not info_meteo.get("stima_mappa"):
-            mappa = _mappa_smentisce_stazione(df, p["lat"], p["lon"])
-            if mappa and mappa.get("df") is not None and len(mappa["df"]):
-                mm_st = float(pd.to_numeric(df["precip"], errors="coerce").sum()) if "precip" in df.columns else 0
-                mm_m = float(mappa.get("mese_mm") or 0)
-                # Mappa quasi secca + stazione bagnata (tipico Abruzzo pixel errato): tieni stazione
-                if mm_m < 8 and mm_st >= 20:
-                    pass
-                elif _pluvio_morto(mappa["df"]) and mm_st >= 10:
-                    pass
-                else:
-                    keep_t = df.copy()
-                    df = mappa["df"].copy()
-                    try:
-                        keep_t["date"] = pd.to_datetime(keep_t["date"], errors="coerce")
-                        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                        cols = [c for c in ("t_max", "t_min", "t_mean", "t_med", "vento_max") if c in keep_t.columns]
-                        if cols:
-                            if "vento_max" in df.columns:
-                                df = df.drop(columns=["vento_max"])
-                            df = df.merge(keep_t[["date"] + cols], on="date", how="left")
-                    except Exception:
-                        pass
-                    info_meteo["fonte"] = (
-                        f"Pluviometro smentito dalle mappe MN ({mm_st:.0f} mm stazione vs {mm_m:.0f} mm sul bosco) · "
-                        "Mappe giornaliere MN"
-                    )
-                    info_meteo["stima_mappa"] = True
-                    info_meteo["pioggia_stazione_30g"] = mm_m
-                    gg = [
-                        f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                        for _, rr in mappa["df"].iterrows()
-                        if float(rr.get("precip") or 0) >= 0.2
-                    ]
-                    if not gg:
-                        gg = [
-                            f"mappa MN: {mm_m:.0f} mm totali sul pixel "
-                            "(nessun giorno con pioggia leggibile — possibile errore di lettura)"
-                        ]
-                    info_meteo["giorni_pluviometro"] = gg
-                    if "vento_max" in df.columns:
-                        vento = riepilogo_vento(df)
-    except Exception:
-        pass
+    # zona con stazione: non si tocca, niente confronto con la mappa
     fonte0 = str(info_meteo.get("fonte") or "")
     if (
         fonte0.startswith("MeteoNetwork")
@@ -5169,7 +5123,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_
     tot = max(1, len(punti))
     barra = st.progress(0, text=f"Preparazione {tot} zone…")
     try:
-        mn_preload_mappe(10)
+        mn_preload_mappe(30)
     except Exception:
         pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
