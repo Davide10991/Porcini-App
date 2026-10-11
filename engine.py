@@ -4152,6 +4152,15 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         except Exception:
             pass
         vento = riepilogo_vento(df)
+    if not isinstance(soil, dict) or not soil.get("t_suolo"):
+        try:
+            _st, _fc, _so, _vo = get_openmeteo_bundle(lat, lon, 16)
+            if isinstance(_so, dict) and _so.get("t_suolo"):
+                soil = _so
+            if forecast is None:
+                forecast = _fc
+        except Exception:
+            pass
     return df, info, forecast, soil, vento
 
 
