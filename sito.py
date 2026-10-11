@@ -47,7 +47,7 @@ ADMIN_EMAILS = {
     "davide1099",
 }
 ADMIN_NOTIFY_EMAIL = "boletusmap@gmail.com"
-PAYPAL_DONATE = "https://paypal.me/Davide751/10"
+PAYPAL_ACCESSO = "https://paypal.me/Davide751/20"
 CODES_FILE = Path(__file__).resolve().parent / "invite_codes.json"
 REQUESTS_FILE = Path(__file__).resolve().parent / "invite_requests.json"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
@@ -274,7 +274,7 @@ def _html_mail(titolo, paragrafi, footer="Buona cerca,<br>Il team Boletus Map"):
 def _invia_codice_a_utente(email, codice):
     testo = (
         f"Ciao,\n\n"
-        f"grazie per la donazione a supporto di Boletus Map.\n\n"
+        f"grazie per l'acquisto dell'accesso lifetime a Boletus Map.\n\n"
         f"Il tuo codice invito monouso è:\n\n"
         f"    {codice}\n\n"
         f"Registrati su Boletus Map inserendo questo codice.\n"
@@ -285,7 +285,7 @@ def _invia_codice_a_utente(email, codice):
     html = _html_mail(
         "Il tuo codice invito",
         [
-            "Grazie per la donazione a supporto di <b>Boletus Map</b>.",
+            "Grazie per l'acquisto dell'accesso lifetime a <b>Boletus Map</b>.",
             f"Il tuo <b>codice invito monouso</b> è:",
             f"<div style=\"text-align:center;font-size:22px;letter-spacing:.08em;padding:14px;"
             f"margin:8px 0;background:#1a1008;border-radius:10px;border:1px solid #c4783a\">"
@@ -297,7 +297,7 @@ def _invia_codice_a_utente(email, codice):
 
 
 def _invia_richiesta_codice(email_richiedente, tx_id=""):
-    """Salva richiesta + avvisa admin. Il codice si invia solo dopo approvazione (donazione)."""
+    """Salva richiesta + avvisa admin. Il codice si invia solo dopo verifica del pagamento (accesso 20 €)."""
     cfg = _smtp_conf()
     email_richiedente = (email_richiedente or "").strip().lower()
     token = secrets.token_urlsafe(16)
@@ -322,7 +322,7 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
         f"Email: {email_richiedente}\n"
         f"ID pagamento PayPal (se indicato): {tx_id or '(non indicato)'}\n"
         f"IP: {request.remote_addr or '?'}\n\n"
-        "Verifica la donazione (≥ 10 €) su PayPal,\n"
+        "Verifica il pagamento dell'accesso (20 €) su PayPal,\n"
         "poi approva e invia il codice monouso con questo link:\n\n"
         f"{link}\n"
     )
@@ -333,13 +333,13 @@ def _invia_richiesta_codice(email_richiedente, tx_id=""):
             f"<b>Email:</b> {email_richiedente}",
             f"<b>ID PayPal:</b> {tx_id or '(non indicato)'}",
             f"<b>IP:</b> {request.remote_addr or '?'}",
-            "Verifica la donazione (≥ 10 €), poi approva dal link:",
+            "Verifica il pagamento dell'accesso (20 €, beni e servizi), poi approva dal link:",
             f'<a href="{link}" style="color:#c4783a;word-break:break-all">{link}</a>',
         ],
         footer="Boletus Map — pannello admin",
     )
     try:
-        _invia_mail(dest, f"Richiesta codice (donazione) — {email_richiedente}", corpo, html)
+        _invia_mail(dest, f"Richiesta codice accesso — {email_richiedente}", corpo, html)
     except Exception:
         pass
     return True
@@ -356,26 +356,26 @@ def _invia_prova(dest, scadenza):
         f"Ciao,\n\n"
         f"la prova di Boletus Map è attiva.\n\n"
         f"Account: {dest}\n"
-        f"Il tuo account scadrà tra due giorni, il {quando}.\n\n"
+        f"Il tuo account scadrà tra una settimana, il {quando}.\n\n"
         f"Dopo quella data l'accesso alla mappa si blocca.\n"
-        f"Per tenerlo per sempre, dona almeno 10 euro e inserisci il codice invito "
+        f"Per tenerlo per sempre, acquista l'accesso a 20 euro (PayPal, beni e servizi) e inserisci il codice invito "
         f"nella pagina di upgrade, con la stessa email. Non devi rifare la registrazione.\n\n"
-        f"Dona: {PAYPAL_DONATE}\n"
+        f"Paga l'accesso: {PAYPAL_ACCESSO}\n"
         f"Upgrade: https://boletusmap.it/upgrade\n\n"
         f"Buona cerca,\nIl team Boletus Map\n"
     )
     html = _html_mail(
-        "Prova attiva — scade tra due giorni",
+        "Prova attiva — scade tra una settimana",
         [
             "La prova di <b>Boletus Map</b> è attiva.",
             f"<b>Account:</b> {dest}",
-            f"<b>Il tuo account scadrà tra due giorni</b>, il {quando}. Dopo quella data l'accesso alla mappa non funziona più.",
-            "Per passare all'account senza scadenza, dona almeno 10 € e inserisci il codice invito nella pagina di upgrade, con la stessa email. Non devi rifare la registrazione.",
-            f'<a href="{PAYPAL_DONATE}" style="display:inline-block;margin-top:8px;padding:12px 16px;background:#c4783a;color:#1a1008;text-decoration:none;border-radius:10px;font-weight:700">Fai l\'upgrade — dona 10 €</a>',
+            f"<b>Il tuo account scadrà tra una settimana</b>, il {quando}. Dopo quella data l'accesso alla mappa non funziona più.",
+            "Per passare all'account senza scadenza, acquista l'accesso a 20 € come beni e servizi e inserisci il codice invito nella pagina di upgrade, con la stessa email. Non devi rifare la registrazione.",
+            f'<a href="{PAYPAL_ACCESSO}" style="display:inline-block;margin-top:8px;padding:12px 16px;background:#c4783a;color:#1a1008;text-decoration:none;border-radius:10px;font-weight:700">Fai l\'upgrade — 20 €, beni e servizi</a>',
             'Poi apri <a href="https://boletusmap.it/upgrade" style="color:#c4783a">boletusmap.it/upgrade</a> e inserisci email, password e codice.',
         ],
     )
-    return _invia_mail(dest, "Boletus Map — la prova scade tra due giorni", testo, html)
+    return _invia_mail(dest, "Boletus Map — la prova scade tra una settimana", testo, html)
 
 
 
@@ -648,7 +648,7 @@ def login():
                 if rec.get("verificato") is False:
                     err = "Email non ancora confermata. Apri il link che ti abbiamo inviato."
                 elif _prova_scaduta(email_l):
-                    err = "Prova di 2 giorni scaduta. Per continuare serve il codice invito."
+                    err = "Prova di una settimana scaduta. Per continuare serve il codice invito."
                 else:
                     session["ok"] = True
                     session["email"] = email_l
@@ -659,7 +659,7 @@ def login():
             if not err:
                 err = "Email o password errati"
     if not err and request.args.get("err") == "prova":
-        err = "Prova di 2 giorni scaduta. Per continuare serve il codice invito."
+        err = "Prova di una settimana scaduta. Per continuare serve il codice invito."
     domanda = _nuovo_captcha()
     return render_template(
         "login.html",
@@ -678,12 +678,12 @@ def richiedi_codice():
     if not email or "@" not in email:
         return jsonify(ok=False, errore="Inserisci prima la tua email")
     if not donato:
-        return jsonify(ok=False, errore="Conferma di aver donato almeno 10 € via PayPal")
+        return jsonify(ok=False, errore="Conferma di aver pagato l'accesso da 20 € via PayPal")
     try:
         _invia_richiesta_codice(email, tx_id=tx_id)
         return jsonify(
             ok=True,
-            messaggio="Richiesta inviata. Dopo la verifica della donazione riceverai il codice invito via email.",
+            messaggio="Richiesta inviata. Dopo la verifica del pagamento riceverai il codice invito via email.",
         )
     except Exception:
         return jsonify(ok=False, errore="Impossibile inviare la richiesta. Riprova più tardi.")
@@ -740,7 +740,7 @@ def admin_codici():
     return (
         "<html><body style='font-family:system-ui;background:#1a1008;color:#f3e6d4;padding:24px'>"
         "<h1>Boletus Map — Codici invito</h1>"
-        "<p>Richieste in attesa (dopo donazione PayPal ≥ 10 €). Clicca Approva per generare e inviare il codice monouso.</p>"
+        "<p>Richieste in attesa (dopo pagamento accesso 20 €). Clicca Approva per generare e inviare il codice monouso.</p>"
         "<table border='1' cellpadding='8' style='border-collapse:collapse;width:100%;max-width:900px'>"
         "<tr><th>Quando</th><th>Email</th><th>ID PayPal</th><th>Azione</th></tr>"
         + body +
@@ -850,7 +850,7 @@ def upgrade():
                 session["ruolo"] = "admin" if _is_admin_email(email) else "guest"
                 session["piano"] = "intero"
                 return redirect(url_for("mappa"))
-    return render_template("upgrade.html", errore=err, paypal_url=PAYPAL_DONATE)
+    return render_template("upgrade.html", errore=err, paypal_url=PAYPAL_ACCESSO)
 
 
 @app.route("/register/prova", methods=["POST"])
@@ -876,7 +876,7 @@ def register_prova():
         elif email in users:
             err = "Questa email è già registrata. La prova si può usare una sola volta."
         else:
-            scad = _ora_roma().replace(tzinfo=None) + timedelta(days=2)
+            scad = _ora_roma().replace(tzinfo=None) + timedelta(days=7)
             users[email] = {
                 "hash": generate_password_hash(pw),
                 "quando": _ora_roma().isoformat(timespec="seconds"),
@@ -902,7 +902,7 @@ def register_prova():
                 "register.html",
                 errore="Non siamo riusciti a inviare la mail di conferma. Riprova tra qualche minuto." if not mail_ok else "",
                 ok_richiesta="Controlla la tua casella postale, anche lo spam. Devi aprire il link Conferma email prima di entrare nella mappa." if mail_ok else "",
-                paypal_url=PAYPAL_DONATE,
+                paypal_url=PAYPAL_ACCESSO,
                 captcha_domanda=_nuovo_captcha(),
             ))
             resp.set_cookie("prova_usata", "1", max_age=60*60*24*400, httponly=True, samesite="Lax")
@@ -911,7 +911,7 @@ def register_prova():
         "register.html",
         errore=err,
         ok_richiesta="",
-        paypal_url=PAYPAL_DONATE,
+        paypal_url=PAYPAL_ACCESSO,
         captcha_domanda=_nuovo_captcha(),
     )
 
@@ -960,10 +960,10 @@ def register():
                         "register.html",
                         errore="Non siamo riusciti a inviare la mail di conferma. Riprova tra qualche minuto." if not mail_ok else "",
                         ok_richiesta="Controlla la tua casella postale, anche lo spam. Devi aprire il link Conferma email prima di entrare nella mappa." if mail_ok else "",
-                        paypal_url=PAYPAL_DONATE,
+                        paypal_url=PAYPAL_ACCESSO,
                         captcha_domanda=_nuovo_captcha(),
                     )
-    return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_DONATE, captcha_domanda=_nuovo_captcha())
+    return render_template("register.html", errore=err, ok_richiesta="", paypal_url=PAYPAL_ACCESSO, captcha_domanda=_nuovo_captcha())
 
 
 @app.route("/logout")
