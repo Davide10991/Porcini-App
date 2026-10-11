@@ -963,8 +963,8 @@ def _mn_e_mare_o_bordo(rgb):
         return True
     if r > 245 and g > 245 and b > 245:
         return True
-    # azzurro mare MN
-    if b >= 230 and g >= 190 and r <= 200:
+    # solo l'azzurro chiaro uniforme del mare/fondo, non i blu della pioggia
+    if b >= 240 and g >= 210 and r >= 160 and r <= 190:
         return True
     return False
 
@@ -1153,45 +1153,31 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
-    """Pioggia giornaliera da mappa MN regionale. Se dà 0, riprova su centro/nord/sud."""
-    v = _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
-    if v is None or float(v or 0) < 0.4:
-        zona, *_ = _mn_zona(lat, lon)
-        for alt in ("centro", "nord", "sud"):
-            if alt == zona:
-                continue
-            try:
-                pack = _mn_mappa_px(giorno, "prec", alt)
-            except Exception:
-                pack = None
-            if not pack:
-                continue
-            w, h, buf = pack
-            bounds = {"nord": (44.0, 47.2, 6.5, 13.8), "sud": (36.5, 41.6, 12.5, 18.6), "centro": (40.8, 44.2, 10.5, 15.5)}[alt]
-            x0, y0 = _mn_png_xy_zona(lat, lon, w, h, alt, bounds)
-            rgb = _mn_get_px(buf, w, h, x0, y0)
-            alt_v = _mn_rgb_to_mm(rgb)
-            if alt_v and float(alt_v) > float(v or 0):
-                v = alt_v
-                break
-        if v is None or float(v or 0) < 0.4:
-            pack = _mn_mappa_px(giorno, "prec", "italia")
-            if pack:
-                w, h, buf = pack
-                x0, y0 = _mn_png_xy(lat, lon, w, h)
-                it_v = _mn_rgb_to_mm(_mn_get_px(buf, w, h, x0, y0))
-                if it_v and float(it_v) > float(v or 0):
-                    v = it_v
-    if v is None:
+    """Pioggia del giorno dalla mappa Italia MN (georef nota). Un solo PNG, in cache."""
+    pack = _mn_mappa_px(giorno, "prec", "italia")
+    if not pack:
         return None
     try:
-        v = float(v)
+        w, h, buf = pack
+        x0, y0 = _mn_png_xy(lat, lon, w, h)
+        best = 0.0
+        for rad in (0, 2, 4, 6):
+            found = False
+            for dy in range(-rad, rad + 1):
+                for dx in range(-rad, rad + 1):
+                    if dx * dx + dy * dy > rad * rad:
+                        continue
+                    x = max(0, min(w - 1, x0 + dx))
+                    y = max(0, min(h - 1, y0 + dy))
+                    v = _mn_rgb_to_mm(_mn_get_px(buf, w, h, x, y))
+                    if v and float(v) >= 0.4:
+                        best = max(best, float(v))
+                        found = True
+            if found and rad >= 2:
+                break
+        return round(best, 1) if best >= 0.4 else 0.0
     except Exception:
-        return 0.0
-    # sotto 0.4 mm = fondo mappa; il resto è pioggia da leggere
-    if v < 0.4:
-        return 0.0
-    return round(v, 1)
+        return None
 
 
 def mn_preload_mappe(giorni=30):
@@ -1343,15 +1329,12 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
             mm = None
         if mm is None:
             mm = 0.0
-        tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
-        tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
-        vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
         rows.append({
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
-            "t_min": None if tmin is None else round(float(tmin), 1),
-            "t_max": None if tmax is None else round(float(tmax), 1),
-            "vento_max": None if vento is None else round(float(vento), 1),
+            "t_min": None,
+            "t_max": None,
+            "vento_max": None,
         })
     if not rows:
         return None
@@ -3548,7 +3531,7 @@ def _cf_distribuisci_mese(mese_mm, oggi_mm, days, lat, lon, scheda=None):
     return pd.DataFrame(recs).sort_values("date")
 
 
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione="", solo_mappe=False):
     """Stazioni affidabili entro 5 km (tutte le regioni), poi mappa MN se scoperto.
 
     Ordine:
@@ -3568,6 +3551,31 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
     # utente: non oltre 5 km per stazioni "vicine"
     max_km = min(max_km, 5.0)
     quota_f = float(quota) if quota is not None else None
+
+    if solo_mappe:
+        zona, *_ = _mn_zona(lat, lon)
+        mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+        mdf = mappa.get("df")
+        mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
+        if mdf is not None and len(mdf):
+            giorni = []
+            tmp = mdf.copy()
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
+                giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
+            if not giorni:
+                giorni = [f"mappa MN: {round(mm_m,1)} mm in 30 giorni"]
+            info = {
+                "fonte": f"Mappa giornaliera MeteoNetwork · {zona}",
+                "stazione": f"mappa {zona}",
+                "distanza_km": 0,
+                "quota_stazione": None,
+                "pioggia_stazione_30g": round(mm_m, 1),
+                "giorni_pluviometro": giorni,
+                "stima_mappa": True,
+            }
+            return mdf.copy(), info, None, None, riepilogo_vento(None)
+        return None, {"fonte": "Mappa MN non disponibile", "giorni_pluviometro": []}, None, None, riepilogo_vento(None)
 
     candidati = []  # list of dict: score, df, info
 
@@ -4932,7 +4940,7 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, solo_mappe=False):
     p = dict(p)
     p["tipo"] = classifica_bosco(
         p.get("nome"), p.get("quota"), p.get("regione"), p.get("lat"), p.get("tipo")
@@ -4942,6 +4950,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
         usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
+        solo_mappe=solo_mappe,
     )
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
