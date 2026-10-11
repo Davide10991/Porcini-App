@@ -1084,15 +1084,16 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
                         out.append(min(80.0, fv))
             return out
 
-        # prima il pixel esatto + vicini immediati (anti-alias mappa)
-        vals = _valori_raggio(2)
+        # pixel del punto, poi intorno: un pixel di scarto cade sul fondo chiaro
+        vals = _valori_raggio(3)
         if not vals:
-            vals = _valori_raggio(4)  # ~5 km solo se il punto è su pixel vuoto
+            vals = _valori_raggio(8)
         if not vals:
             return 0.0
-        # mediana dei pixel sul punto (non il max lontano)
         vals.sort()
-        return vals[len(vals) // 2]
+        # mediana, ma se intorno c'è pioggia vera non lasciare 0
+        med = vals[len(vals) // 2]
+        return max(med, max(vals) if max(vals) >= 2 else med)
     except Exception:
         return None
 
@@ -1152,8 +1153,27 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
-    """Pioggia giornaliera da mappa MN: max locale; sotto 2.5 mm = rumore pixel."""
+    """Pioggia giornaliera da mappa MN regionale. Se dà 0, riprova su centro/nord/sud."""
     v = _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
+    if v is None or float(v or 0) < 0.4:
+        zona, *_ = _mn_zona(lat, lon)
+        for alt in ("centro", "nord", "sud"):
+            if alt == zona:
+                continue
+            try:
+                pack = _mn_mappa_px(giorno, "prec", alt)
+            except Exception:
+                pack = None
+            if not pack:
+                continue
+            w, h, buf = pack
+            bounds = {"nord": (44.0, 47.2, 6.5, 13.8), "sud": (36.5, 41.6, 12.5, 18.6), "centro": (40.8, 44.2, 10.5, 15.5)}[alt]
+            x0, y0 = _mn_png_xy_zona(lat, lon, w, h, alt, bounds)
+            rgb = _mn_get_px(buf, w, h, x0, y0)
+            alt_v = _mn_rgb_to_mm(rgb)
+            if alt_v and float(alt_v) > float(v or 0):
+                v = alt_v
+                break
     if v is None:
         return None
     try:
