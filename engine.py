@@ -1144,9 +1144,14 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
                 r = None
                 time.sleep(0.5)
         if r is None or r.status_code != 200 or len(r.content) < 10000:
+            _MN_ERR["ultimo"] = "download fallito"
             return None
-        from PIL import Image
-        import io
+        try:
+            from PIL import Image
+            import io
+        except Exception:
+            _MN_ERR["ultimo"] = "manca Pillow sul server"
+            return None
         im = Image.open(io.BytesIO(r.content)).convert("RGB")
         buf = im.tobytes()
         try:
@@ -2292,7 +2297,7 @@ def get_openmeteo_bundle(lat, lon, days=30):
         "past_days": min(days, 92),
         "forecast_days": 7,
         "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,wind_speed_10m_max",
-        "hourly": "soil_moisture_7_to_28cm",
+        "hourly": "soil_moisture_7_to_28cm,soil_temperature_6cm,soil_temperature_18cm",
         "timezone": "Europe/Rome",
         "models": "italia_meteo_arpae_icon_2i",
     }
@@ -2325,13 +2330,21 @@ def get_openmeteo_bundle(lat, lon, days=30):
             storico = storico.merge(daily[["date", "vento_max"]], on="date", how="left")
     forecast = daily[daily["date"] > oggi].head(7) if daily is not None else None
 
-    soil = None
-    if data.get("hourly") and data["hourly"].get("soil_moisture_7_to_28cm"):
-        soil_vals = [v for v in data["hourly"]["soil_moisture_7_to_28cm"] if v is not None]
-        if soil_vals:
-            soil = round(sum(soil_vals[-72:]) / max(1, len(soil_vals[-72:])), 3)
+    soil = {}
+    hourly = data.get("hourly") or {}
+    um = [v for v in (hourly.get("soil_moisture_7_to_28cm") or []) if v is not None]
+    if um:
+        soil["umidita"] = round(sum(um[-72:]) / max(1, len(um[-72:])), 3)
+    for key, nome in (("soil_temperature_6cm", "t6"), ("soil_temperature_18cm", "t18")):
+        vals = [v for v in (hourly.get(key) or []) if v is not None]
+        if vals:
+            soil[nome] = round(sum(vals[-24:]) / max(1, len(vals[-24:])), 1)
+    if soil.get("t6") is not None and soil.get("t18") is not None:
+        soil["t_suolo"] = round((soil["t6"] + soil["t18"]) / 2, 1)
+    elif soil.get("t6") is not None:
+        soil["t_suolo"] = soil["t6"]
     vento = riepilogo_vento(storico if storico is not None else daily)
-    return storico, forecast, soil, vento
+    return storico, forecast, (soil or None), vento
 
 
 def get_openmeteo_data(lat, lon, days=30):
@@ -4068,7 +4081,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                     giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
                 if not giorni:
                     if int(mappa.get("falliti") or 0) >= 15:
-                        giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30)"]
+                        giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30) · {_MN_ERR.get('ultimo') or 'errore'}"]
                     else:
                         giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
                 info = {
@@ -4141,6 +4154,65 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         vento = riepilogo_vento(df)
     return df, info, forecast, soil, vento
 
+
+
+
+# Fasce FunghiMagazine per specie (massima, minima).
+# aereus caldo, estatino mite-caldo, edulis fresco, pinicola il più fresco.
+FASCE_SPECIE = {
+    "aereus":   ((18, 26), (12, 18)),
+    "estatino": ((16, 24), (10, 16)),
+    "edulis":   ((12, 20), (6, 13)),
+    "pinicola": ((10, 18), (4, 11)),
+}
+NOME_SPECIE = {
+    "aereus": "nero",
+    "estatino": "estatino",
+    "edulis": "edulis",
+    "pinicola": "pinicola",
+}
+
+
+def _specie_del_bosco(tipo_bosco):
+    base = {
+        "faggio": ["estatino", "edulis", "pinicola"],
+        "castagno": ["estatino", "edulis", "pinicola", "aereus"],
+        "quercia": ["estatino", "aereus", "edulis"],
+        "leccio": ["aereus", "estatino", "edulis"],
+        "misto_carpino_quercia": ["estatino", "aereus", "edulis"],
+        "abete_bianco": ["pinicola", "edulis", "estatino"],
+        "abete_rosso": ["pinicola", "edulis"],
+    }
+    return base.get((tipo_bosco or "").lower(), ["estatino", "edulis"])
+
+
+def _temp_per_specie(t_max, t_min, tipo_bosco):
+    """Punteggio e nota in base al porcino che quel bosco può fare."""
+    migliori = []
+    for sp in _specie_del_bosco(tipo_bosco):
+        (mx0, mx1), (mn0, mn1) = FASCE_SPECIE[sp]
+        punti = 0
+        if mx0 <= t_max <= mx1:
+            punti += 25
+        elif mx0 - 3 <= t_max <= mx1 + 3:
+            punti += 14
+        else:
+            punti += 4
+        if mn0 <= t_min <= mn1:
+            punti += 15
+        elif mn0 - 3 <= t_min <= mn1 + 3:
+            punti += 9
+        else:
+            punti += 2
+        migliori.append((punti, sp))
+    migliori.sort(reverse=True)
+    best = migliori[0][1]
+    ok = [NOME_SPECIE[sp] for pt, sp in migliori if pt >= 30]
+    if ok:
+        nota = "Temperature adatte a: " + ", ".join(ok)
+    else:
+        nota = f"Temperature più vicine al {NOME_SPECIE[best]}"
+    return migliori[0][0], nota, best
 
 
 def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
@@ -4417,11 +4489,20 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             durata = round(durata * 0.82)
         if soil is not None:
             try:
-                s = float(soil)
-                if s < 0.18:
+                s = soil.get("umidita") if isinstance(soil, dict) else float(soil)
+                if s is not None and s < 0.18:
                     durata = round(durata * 0.75)
-                elif 0.22 <= s <= 0.38:
+                elif s is not None and 0.22 <= s <= 0.38:
                     durata = min(18, durata + 1)
+            except Exception:
+                pass
+            # terreno ancora caldo dall'estate: la buttata parte più tardi
+            try:
+                ts = soil.get("t_suolo") if isinstance(soil, dict) else None
+                if ts is not None and ts >= 18:
+                    attesa = attesa + (3 if ts >= 20 else 2)
+                    inizio = data_riferimento + pd.Timedelta(days=attesa)
+                    fine = inizio + pd.Timedelta(days=durata)
             except Exception:
                 pass
         durata = int(max(8, min(18, durata)))
@@ -4664,16 +4745,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     pioggia_min = regole["pioggia_min"]
     pioggia_max = regole["pioggia_max"]
 
-    # in quota le temperature ideali sono più basse
+    # Fascia di riferimento: quella della specie che questo bosco può fare.
+    possibili = _specie_del_bosco(tipo_bosco)
     if quota >= 1400:
-        t_max_ok = (18, 24)
-        t_min_ok = (8, 14)
-    elif quota >= 1000:
-        t_max_ok = (20, 26)
-        t_min_ok = (10, 16)
-    else:
-        t_max_ok = (22, 28)
-        t_min_ok = (12, 18)
+        possibili = [s for s in possibili if s in ("pinicola", "edulis")] or possibili
+    sp_ref = possibili[0]
+    (t_max_ok, t_min_ok) = FASCE_SPECIE.get(sp_ref, ((16, 22), (8, 14)))
 
     if t_max_media > 27:
         pioggia_min += 15
@@ -4701,24 +4778,11 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     if 4 <= giorni_con_pioggia <= 12 and precip_totale >= 35:
         score_pioggia = min(70, score_pioggia + 6)
 
-    # Temperature (indicazioni tipo FunghiMagazine / micologia pratica):
-    # dopo la pioggia le minime non devono essere troppo basse (gelate o freddo
-    # prolungato rallentano/fermano la buttata); ideali miti, non afose.
-    score_temp = 0
-    nota_temp = ""
-    if t_max_ok[0] <= t_max_media <= t_max_ok[1]:
-        score_temp += 25
-    elif t_max_ok[0] - 3 <= t_max_media <= t_max_ok[1] + 3:
-        score_temp += 15
-    else:
-        score_temp += 5
-
-    if t_min_ok[0] <= t_min_media <= t_min_ok[1]:
-        score_temp += 15
-    elif t_min_ok[0] - 3 <= t_min_media <= t_min_ok[1] + 3:
-        score_temp += 10
-    else:
-        score_temp += 3
+    # Temperature come negli articoli FunghiMagazine:
+    # dopo la pioggia il bosco deve restare mite. Il caldo secco e le minime
+    # basse (sotto i 5 °C, gelo sotto i 2) frenano o fermano le nascite.
+    # Lo shock termico (calo dopo la pioggia) è favorevole, non il caldo.
+    score_temp, nota_temp, _sp = _temp_per_specie(t_max_media, t_min_media, tipo_bosco)
 
     # Freddo eccessivo (FM: temperature troppo basse ostacolano le nascite)
     try:
@@ -4799,12 +4863,32 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         score_tempo = 3
 
     score_suolo = 0
-    if soil is not None:
-        # valori volumetrici tipici 0.15–0.40 m3/m3
-        if 0.22 <= soil <= 0.38:
-            score_suolo = 10
-        elif 0.18 <= soil <= 0.42:
-            score_suolo = 5
+    umid = soil.get("umidita") if isinstance(soil, dict) else soil
+    t_suolo = soil.get("t_suolo") if isinstance(soil, dict) else None
+    if umid is not None:
+        try:
+            umid = float(umid)
+            if 0.22 <= umid <= 0.38:
+                score_suolo = 10
+            elif 0.18 <= umid <= 0.42:
+                score_suolo = 5
+        except Exception:
+            pass
+    # FunghiMagazine: dopo l'estate il suolo resta caldo più dell'aria.
+    # Se è ancora sopra ~18 °C le nascite slittano, anche con aria già fresca.
+    if t_suolo is not None:
+        try:
+            ts = float(t_suolo)
+            if ts >= 20:
+                score_suolo = max(0, score_suolo - 8)
+                nota_temp = (nota_temp + " · " if nota_temp else "") + f"Terreno ancora caldo ({ts:.0f}°C): nascite in ritardo"
+            elif ts >= 18:
+                score_suolo = max(0, score_suolo - 4)
+                nota_temp = (nota_temp + " · " if nota_temp else "") + f"Terreno tiepido ({ts:.0f}°C): attesa un po' più lunga"
+            elif 10 <= ts <= 16:
+                score_suolo += 4
+        except Exception:
+            pass
 
     # il vento persistente brucia l'effetto della pioggia e del suolo
     umido = (score_pioggia + score_tempo + score_suolo) * fattore_v
@@ -4841,7 +4925,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "t_med_media": t_med_view if t_med_view is not None else "n/d",
         "giorni_dalla_buona_pioggia": giorni_dalla_pioggia if giorni_dalla_pioggia < 99 else "n/d",
         "giorni_attesa_consigliati": giorni_attesa,
-        "umidita_suolo": soil if soil is not None else "n/d",
+        "umidita_suolo": (soil.get("umidita") if isinstance(soil, dict) else soil) if soil is not None else "n/d",
+        "t_suolo": (soil.get("t_suolo") if isinstance(soil, dict) else None) if soil is not None else "n/d",
         "consiglio": consiglio,
         "vento_medio_10g": vento.get("vento_medio_10g"),
         "vento_max_10g": vento.get("vento_max_10g"),
@@ -5128,7 +5213,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_
         pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
     fatti = 0
-    with ThreadPoolExecutor(max_workers=max(1, min(3, max_workers))) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(6, max_workers))) as ex:
         fut = {
             ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn, usa_wc): p
             for p in punti
