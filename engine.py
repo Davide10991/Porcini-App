@@ -1107,7 +1107,7 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
     d = str(giorno)
     zona = zona or "italia"
     _MAPPE_DIR.mkdir(exist_ok=True)
-    fp = _MAPPE_DIR / f"{d}_{variabile}_{zona}.bin"
+    fp = _MAPPE_DIR / f"v3_{d}_{variabile}_{zona}.bin"
     if fp.exists() and fp.stat().st_size > 1000:
         try:
             raw = fp.read_bytes()
@@ -1161,8 +1161,7 @@ def mn_prec_da_mappa(lat, lon, giorno):
         w, h, buf = pack
         x0, y0 = _mn_png_xy(lat, lon, w, h)
         best = 0.0
-        for rad in (0, 2, 4, 6):
-            found = False
+        for rad in (0, 3, 8, 16):
             for dy in range(-rad, rad + 1):
                 for dx in range(-rad, rad + 1):
                     if dx * dx + dy * dy > rad * rad:
@@ -1172,8 +1171,7 @@ def mn_prec_da_mappa(lat, lon, giorno):
                     v = _mn_rgb_to_mm(_mn_get_px(buf, w, h, x, y))
                     if v and float(v) >= 0.4:
                         best = max(best, float(v))
-                        found = True
-            if found and rad >= 2:
+            if best >= 0.4 and rad >= 3:
                 break
         return round(best, 1) if best >= 0.4 else 0.0
     except Exception:
