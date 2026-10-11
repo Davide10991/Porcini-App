@@ -51,6 +51,7 @@ PAYPAL_ACCESSO = "https://paypal.me/Davide751/20"
 CODES_FILE = Path(__file__).resolve().parent / "invite_codes.json"
 REQUESTS_FILE = Path(__file__).resolve().parent / "invite_requests.json"
 CACHE_FILE = Path(__file__).resolve().parent / "ultimo_calcolo.json"
+NOVITA_FILE = Path(__file__).resolve().parent / "novita.json"
 USERS_FILE = Path(__file__).resolve().parent / "utenti.json"
 CACHE = {"risultati": [], "aggiornato": None}
 
@@ -107,6 +108,24 @@ def _salva_utenti(d):
     USERS_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2))
 
 
+
+
+
+def _carica_novita():
+    try:
+        if NOVITA_FILE.exists():
+            d = json.loads(NOVITA_FILE.read_text(encoding="utf-8"))
+            return (d.get("testo") or "").strip(), d.get("aggiornato") or ""
+    except Exception:
+        pass
+    return "", ""
+
+
+def _salva_novita(testo):
+    NOVITA_FILE.write_text(
+        json.dumps({"testo": testo.strip(), "aggiornato": _ora_roma().strftime("%d/%m/%Y %H:%M")}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _is_admin_email(email):
@@ -691,6 +710,19 @@ def richiedi_codice():
 
 
 
+
+@app.route("/admin/novita", methods=["GET", "POST"])
+def admin_novita():
+    if not _is_admin_email(session.get("email")) and session.get("ruolo") != "admin":
+        return redirect(url_for("login"))
+    msg = ""
+    if request.method == "POST":
+        _salva_novita(request.form.get("testo") or "")
+        msg = "Novità salvate. Sono visibili in homepage."
+    testo, quando = _carica_novita()
+    return render_template("admin_novita.html", testo=testo, quando=quando, msg=msg)
+
+
 @app.route("/admin/utenti", methods=["GET", "POST"])
 @login_required
 def admin_utenti():
@@ -976,9 +1008,12 @@ def logout():
 @app.route("/home")
 def home():
     # Sempre visibile, anche da loggati (Google e visitatori devono poterla leggere).
+    testo, quando = _carica_novita()
     return render_template(
         "homepage.html",
         loggato=bool(session.get("ok")),
+        novita=testo,
+        novita_quando=quando,
     )
 
 

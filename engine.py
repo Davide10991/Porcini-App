@@ -2114,7 +2114,7 @@ def riepilogo_vento(df, giorni=10, dopo_data=None):
     if fattore >= 0.85:
         nota = "Vento debole dopo la pioggia: umidità del suolo tenuta"
     elif fattore >= 0.5:
-        nota = "Vento fresco dopo la spugnata: il letto si sta asciugando"
+        nota = "Vento fresco dopo la pioggia cumulata: il letto si sta asciugando"
     elif fattore >= 0.2:
         nota = "Vento forte dopo la pioggia: nascite fortemente ridotte"
     else:
@@ -4483,7 +4483,7 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "ACQUA DEBOLE",
             "testo": (
-                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma nessuna spugnata abbastanza "
+                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma nessuna pioggia cumulata abbastanza "
                 "concentrata (serve un blocco di pioggia ~40 mm in pochi giorni, meglio se "
                 "distribuita su 2–4 giorni). Con questo totale serve ancora un'onda utile "
                 "per far partire la buttata."
@@ -4525,7 +4525,7 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
                 f"Dovrebbe tenere fino al {b['fine']}"
                 + (f" (ancora ~{restano} giorni)" if restano is not None else "")
                 + f", finché il micelio trova umidità. "
-                f"Spugnata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                f"Pioggia cumulata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
                 "Se ripiove, può incrociarsi una nuova onda."
             ),
         }
@@ -4537,7 +4537,7 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "IN ATTESA",
             "testo": (
-                f"Spugnata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                f"Pioggia cumulata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
                 f"Le prime nascite (inizio buttata) sono previste tra {manca} giorni "
                 f"(dal {b['inizio']}). Poi la buttata può durare circa due settimane "
                 f"(fino al {b['fine']}), se l'umidità tiene."
@@ -4549,7 +4549,7 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         "testo": (
             f"Buttata FINITA il {b['fine']} (era partita il {b['inizio']} "
             f"dopo {b['pioggia_mm']} mm il {b['data_pioggia']}). "
-            "Serve una nuova spugnata per farne riniziare un'altra."
+            "Serve una nuova pioggia cumulata per farne riniziare un'altra."
         ),
     }
 
@@ -4629,7 +4629,7 @@ def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
     if forecast is not None and len(forecast):
         pioggia_prevista = float(forecast["precip"].sum())
         if pioggia_prevista >= 20:
-            stato += f" · in arrivo ~{pioggia_prevista:.0f} mm (nuova spugnata)"
+            stato += f" · in arrivo ~{pioggia_prevista:.0f} mm (nuova pioggia cumulata)"
     return stato
 
 
@@ -4774,7 +4774,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         vento = dict(vento0)
         vento["fattore_vento"] = 1.0
         if vento0.get("nota_vento"):
-            vento["nota_vento"] = "Vento prima di una spugnata: non penalizza la buttata"
+            vento["nota_vento"] = "Vento prima di una pioggia cumulata: non penalizza la buttata"
     fattore_v = float(vento.get("fattore_vento") or 1.0)
     attive = [b for b in buttate if b.get("attiva")]
     giorni_dalla_pioggia = 99
@@ -4814,7 +4814,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         if pd.to_datetime(ultime["inizio"]) > pd.Timestamp(datetime.now().date()):
             consiglio = f"Buttata in arrivo dal {ultime['inizio']} (pioggia {ultime['pioggia_mm']} mm il {ultime['data_pioggia']})"
         else:
-            consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova spugnata"
+            consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova pioggia cumulata"
     else:
         consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
     attese = [s for s in specie if s["stato"] in ("probabile", "possibile")]
