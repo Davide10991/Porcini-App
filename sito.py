@@ -444,14 +444,24 @@ def _invia_registrazione(dest):
 
 
 def _carica_cache():
-    if CACHE.get("risultati"):
-        return
+    """Ricarica se il file è più nuovo (calcolo notturno)."""
+    try:
+        if CACHE_FILE.exists():
+            mtime = CACHE_FILE.stat().st_mtime
+            if CACHE.get("_mtime") == mtime and CACHE.get("risultati"):
+                return
+        elif CACHE.get("risultati"):
+            return
+    except Exception:
+        if CACHE.get("risultati"):
+            return
     if CACHE_FILE.exists():
         try:
             data = json.loads(CACHE_FILE.read_text())
             if isinstance(data, dict) and "zone" in data:
                 CACHE["risultati"] = data.get("zone") or []
                 CACHE["aggiornato"] = data.get("aggiornato")
+                CACHE["_mtime"] = CACHE_FILE.stat().st_mtime
             elif isinstance(data, list):
                 CACHE["risultati"] = data
                 try:
@@ -1067,6 +1077,35 @@ def mappa():
     )
 
 
+
+SALVATE_FILE = Path(__file__).resolve().parent / "zone_salvate.json"
+
+def _leggi_salvate():
+    if not SALVATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(SALVATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _scrivi_salvate(d):
+    SALVATE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+@app.route("/api/zone-salvate", methods=["POST"])
+@login_required
+def api_zone_salvate():
+    body = request.get_json(force=True, silent=True) or {}
+    nome = (body.get("nome") or "").strip()
+    email = (session.get("email") or "").strip().lower()
+    if not nome or not email:
+        return jsonify({"ok": False}), 400
+    d = _leggi_salvate()
+    d.setdefault(email, [])
+    if nome not in d[email]:
+        d[email].append(nome)
+    _scrivi_salvate(d)
+    return jsonify({"ok": True, "n": len(d[email])})
+
 @app.route("/api/zone")
 @login_required
 def api_zone():
@@ -1155,7 +1194,9 @@ def api_calcola_reset():
 @app.route("/api/calcola", methods=["POST"])
 @login_required
 def api_calcola():
-    """Calcolo in background *per sessione*: due utenti possono calcolare insieme."""
+    """Solo admin. Gli altri vedono il calcolo delle 6 di mattina."""
+    if session.get("ruolo") != "admin" and not _is_admin_email(session.get("email")):
+        return jsonify({"ok": False, "errore": "Il calcolo parte da solo ogni mattina alle 6."}), 403
     body = request.get_json(force=True, silent=True) or {}
     # Ogni click = nuovo calcolo: interrompe quello precedente della stessa sessione
     j = _job()
@@ -1194,7 +1235,7 @@ def api_calcola():
             ris = engine.calcola_tutti(
                 punti, regole, "",
                 max_km_stazione=5.0,
-                max_workers=2,
+                max_workers=6,
                 usa_wc=True,
             )
             # se nel frattempo l'utente ha rilanciato, scarta questo risultato
