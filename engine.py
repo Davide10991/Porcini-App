@@ -19,6 +19,8 @@ try:
 except Exception:
     METEOSTAT_OK = False
 
+import meteohub
+
 GUEST_PASS = "Porcino1"
 CALC_PROGRESS = {"pct": 0, "text": ""}
 
@@ -853,12 +855,27 @@ MN_PREC_PALETTE = [
     ((113, 127, 249), 5.0),
     ((39, 111, 253), 10.0),
     ((13, 139, 188), 15.0),
+    ((0, 160, 100), 18.0),
     ((13, 183, 98), 20.0),
+    ((0, 176, 95), 22.0),
+    ((11, 180, 95), 22.0),
+    ((40, 200, 60), 28.0),
     ((65, 231, 35), 30.0),
+    ((63, 229, 33), 32.0),
+    ((100, 240, 20), 35.0),
     ((132, 255, 13), 40.0),
+    ((130, 253, 11), 42.0),
+    ((155, 255, 25), 48.0),
     ((175, 255, 35), 50.0),
+    ((168, 254, 22), 52.0),
+    ((174, 252, 33), 55.0),
+    ((200, 255, 40), 58.0),
     ((221, 255, 43), 60.0),
+    ((219, 252, 40), 62.0),
+    ((217, 254, 31), 65.0),
+    ((240, 250, 30), 70.0),
     ((255, 237, 13), 80.0),
+    ((255, 220, 13), 90.0),
     ((255, 193, 13), 100.0),
     ((255, 156, 13), 120.0),
     ((255, 112, 13), 150.0),
@@ -884,6 +901,56 @@ MN_WIND_PALETTE = [
 ]
 
 
+
+# Mappe giornaliere MN: regionale se c'è, altrimenti nord/centro/sud, poi Italia.
+MN_ZONE = [
+    ("molise", 41.35, 42.08, 13.90, 15.20),
+    ("abruzzo", 41.60, 42.95, 13.00, 14.85),
+    ("lazio", 41.20, 42.85, 11.40, 14.05),
+    ("campania", 39.95, 41.55, 13.70, 15.85),
+    ("marche", 42.70, 44.00, 12.30, 14.00),
+    ("umbria", 42.35, 43.65, 11.85, 13.30),
+    ("toscana", 42.20, 44.50, 9.60, 12.40),
+    ("puglia_basilicata", 39.70, 42.20, 14.90, 18.60),
+    ("calabria", 37.85, 40.15, 15.50, 17.25),
+    ("sicilia", 36.55, 38.35, 12.30, 15.70),
+    ("sardegna", 38.80, 41.35, 8.10, 9.90),
+    ("emilia_romagna", 43.70, 45.15, 9.20, 12.80),
+    ("lombardia", 44.60, 46.65, 8.40, 11.50),
+    ("triveneto", 44.70, 46.70, 10.60, 13.80),
+    ("piemonte", 44.05, 46.50, 6.60, 9.30),
+    ("liguria", 43.70, 44.70, 7.40, 10.10),
+    ("trentino", 45.60, 47.10, 10.40, 12.50),
+]
+def _mn_frame(w, h, zona):
+    """Area mappa nel PNG: margini e legenda a destra esclusi."""
+    if zona == "italia":
+        return None
+    return (36, max(80, int(w) - 170), 36, max(80, int(h) - 70))
+
+
+def _mn_zona(lat, lon):
+    for nome, la0, la1, lo0, lo1 in MN_ZONE:
+        if la0 <= lat <= la1 and lo0 <= lon <= lo1:
+            return nome, la0, la1, lo0, lo1
+    if lat >= 44.3:
+        return "nord", 44.0, 47.2, 6.5, 13.8
+    if lat <= 41.2:
+        return "sud", 36.5, 41.6, 12.5, 18.6
+    return "centro", 40.8, 44.2, 10.5, 15.5
+
+
+def _mn_png_xy_zona(lat, lon, w, h, zona, bounds):
+    la0, la1, lo0, lo1 = bounds
+    fr = _mn_frame(w, h, zona)
+    if zona == "italia" or not fr:
+        return _mn_png_xy(lat, lon, w, h)
+    x0, x1, y0, y1 = fr
+    x = x0 + (float(lon) - lo0) / max(0.01, lo1 - lo0) * (x1 - x0)
+    y = y0 + (la1 - float(lat)) / max(0.01, la1 - la0) * (y1 - y0)
+    return int(max(0, min(w - 1, x))), int(max(0, min(h - 1, y)))
+
+
 def _mn_png_xy(lat, lon, w=1026, h=1252):
     x = 50 + (float(lon) - 6.2) / (18.8 - 6.2) * 900
     y = 70 + (47.2 - float(lat)) / (47.2 - 36.5) * 1090
@@ -896,8 +963,8 @@ def _mn_e_mare_o_bordo(rgb):
         return True
     if r > 245 and g > 245 and b > 245:
         return True
-    # azzurro mare MN
-    if b >= 230 and g >= 190 and r <= 200:
+    # solo l'azzurro chiaro uniforme del mare/fondo, non i blu della pioggia
+    if b >= 240 and g >= 210 and r >= 160 and r <= 190:
         return True
     return False
 
@@ -930,8 +997,27 @@ def _mn_rgb_to_scala(rgb, palette, neutro=True):
 def _mn_rgb_to_mm(rgb):
     if _mn_e_mare_o_bordo(rgb) or _mn_e_terra_asciutta(rgb):
         return 0.0
-    v = _mn_rgb_to_scala(rgb, MN_PREC_PALETTE, neutro=False)
-    return 0.0 if v is None else v
+    r, g, b = rgb[:3]
+    # rosso solo se non è un colore della scala pioggia (legenda isolata)
+    if r > 200 and g < 20 and b < 20 and r - g > 180:
+        return 0.0
+    # match stretto sulla palette
+    best, bd = None, 1e9
+    for (pr, pg, pb), val in MN_PREC_PALETTE:
+        d = (r - pr) ** 2 + (g - pg) ** 2 + (b - pb) ** 2
+        if d < bd:
+            bd, best = d, val
+    # soglia più stretta; per mm alti serve match ancora migliore
+    if best is None:
+        return 0.0
+    if best >= 100 and bd > 900:
+        return 0.0
+    if best >= 40 and bd > 1600:
+        return 0.0
+    if bd > 2200:
+        return 0.0
+    # tetto giornaliero realistico da mappa interpolata
+    return float(min(80.0, best))
 
 
 def _mn_get_px(buf, w, h, x, y):
@@ -940,33 +1026,74 @@ def _mn_get_px(buf, w, h, x, y):
 
 
 def _mn_sample(lat, lon, giorno, variabile, decoder):
-    pack = _mn_mappa_px(giorno, variabile)
+    """Campiona il pixel sulla mappa MN.
+
+    Per la pioggia: nel raggio locale prende il *massimo* tra i pixel terra
+    (le mappe interpolate hanno nuclei colorati; un solo pixel può sottostimare).
+    """
+    zona, la0, la1, lo0, lo1 = _mn_zona(lat, lon)
+    pack = _mn_mappa_px(giorno, variabile, zona)
+    if not pack and zona != "italia":
+        pack = _mn_mappa_px(giorno, variabile, "italia")
+        zona = "italia"
     if not pack:
         return None
     try:
         w, h, buf = pack
-        x0, y0 = _mn_png_xy(lat, lon, w, h)
-        candidati = [(0, 0)]
-        for rad in range(1, 14):
-            for dx in range(-rad, rad + 1):
-                candidati.append((dx, -rad))
-                candidati.append((dx, rad))
-            for dy in range(-rad + 1, rad):
-                candidati.append((-rad, dy))
-                candidati.append((rad, dy))
-        # prima un pixel terra (non mare): se è beige = 0 mm
-        for dx, dy in candidati:
-            x = max(0, min(w - 1, x0 + dx))
-            y = max(0, min(h - 1, y0 + dy))
-            rgb = _mn_get_px(buf, w, h, x, y)
-            if _mn_e_mare_o_bordo(rgb):
-                continue
-            if variabile == "prec" and _mn_e_terra_asciutta(rgb):
-                return 0.0
-            v = decoder(rgb)
-            if v is not None:
-                return v
-        return 0.0 if variabile == "prec" else None
+        x0, y0 = _mn_png_xy_zona(lat, lon, w, h, zona, (la0, la1, lo0, lo1))
+        if variabile != "prec":
+            candidati = [(0, 0)]
+            for rad in range(1, 8):
+                for dx in range(-rad, rad + 1):
+                    candidati.append((dx, -rad))
+                    candidati.append((dx, rad))
+                for dy in range(-rad + 1, rad):
+                    candidati.append((-rad, dy))
+                    candidati.append((rad, dy))
+            for dx, dy in candidati:
+                x = max(0, min(w - 1, x0 + dx))
+                y = max(0, min(h - 1, y0 + dy))
+                rgb = _mn_get_px(buf, w, h, x, y)
+                if _mn_e_mare_o_bordo(rgb):
+                    continue
+                v = decoder(rgb)
+                if v is not None:
+                    return v
+            return None
+
+        # PRECIP: solo sul punto (e 1–2 px intorno ≈ <3 km).
+        # Non si legge a 15–20 km: ogni località ha il suo pixel.
+        def _valori_raggio(rad):
+            out = []
+            r2 = rad * rad
+            for dy in range(-rad, rad + 1):
+                for dx in range(-rad, rad + 1):
+                    if dx * dx + dy * dy > r2:
+                        continue
+                    x = max(0, min(w - 1, x0 + dx))
+                    y = max(0, min(h - 1, y0 + dy))
+                    rgb = _mn_get_px(buf, w, h, x, y)
+                    if _mn_e_mare_o_bordo(rgb):
+                        continue
+                    if _mn_e_terra_asciutta(rgb):
+                        continue
+                    v = decoder(rgb)
+                    if v is None:
+                        continue
+                    fv = float(v)
+                    # anche 0.5–2 mm è pioggia vera sulla mappa MN (azzurro), non rumore
+                    if fv >= 0.4:
+                        out.append(min(80.0, fv))
+            return out
+
+        # pixel del punto, poi intorno: un pixel di scarto cade sul fondo chiaro
+        vals = _valori_raggio(4)
+        if not vals:
+            vals = _valori_raggio(14)
+        if not vals:
+            return 0.0
+        vals.sort()
+        return max(vals)
     except Exception:
         return None
 
@@ -974,51 +1101,94 @@ def _mn_sample(lat, lon, giorno, variabile, decoder):
 _MAPPE_DIR = Path(__file__).resolve().parent / "cache_mappe"
 
 
-@st.cache_data(ttl=21600)
-def _mn_mappa_px(giorno, variabile="prec"):
-    """Scarica e decodifica UNA volta la PNG del giorno (disco + RAM)."""
+_MN_PX = {}
+
+def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
+    """Scarica e decodifica UNA volta la PNG del giorno. I fallimenti non si salvano."""
     d = str(giorno)
+    zona = zona or "italia"
+    key = (d, variabile, zona)
+    if key in _MN_PX:
+        return _MN_PX[key]
     _MAPPE_DIR.mkdir(exist_ok=True)
-    fp = _MAPPE_DIR / f"{d}_{variabile}.bin"
+    fp = _MAPPE_DIR / f"v3_{d}_{variabile}_{zona}.bin"
     if fp.exists() and fp.stat().st_size > 1000:
         try:
             raw = fp.read_bytes()
             w = int.from_bytes(raw[:4], "big")
             h = int.from_bytes(raw[4:8], "big")
-            return (w, h, raw[8:])
+            out = (w, h, raw[8:])
+            _MN_PX[key] = out
+            return out
         except Exception:
             pass
     url = (
         "https://cdn1.meteonetwork.it/models/malawi/wnetwork/mappe_daily/"
-        f"{d}/{d}_{variabile}_italia.png"
+        f"{d}/{d}_{variabile}_{zona}.png"
     )
     try:
         r = None
         for _t in range(3):
             try:
-                r = requests.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+                r = requests.get(
+                    url,
+                    timeout=12,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (compatible; BoletusMap/1.0)",
+                        "Accept": "image/png,image/*;q=0.8,*/*;q=0.5",
+                    },
+                )
                 if r.status_code == 200 and len(r.content) >= 10000:
                     break
             except Exception:
                 r = None
-                time.sleep(0.4)
+                time.sleep(0.5)
         if r is None or r.status_code != 200 or len(r.content) < 10000:
+            _MN_ERR["ultimo"] = "download fallito"
             return None
-        from PIL import Image
-        import io
+        try:
+            from PIL import Image
+            import io
+        except Exception:
+            _MN_ERR["ultimo"] = "manca Pillow sul server"
+            return None
         im = Image.open(io.BytesIO(r.content)).convert("RGB")
         buf = im.tobytes()
         try:
             fp.write_bytes(im.size[0].to_bytes(4, "big") + im.size[1].to_bytes(4, "big") + buf)
         except Exception:
             pass
-        return (im.size[0], im.size[1], buf)
+        out = (im.size[0], im.size[1], buf)
+        _MN_PX[key] = out
+        return out
     except Exception:
         return None
 
 
 def mn_prec_da_mappa(lat, lon, giorno):
-    return _mn_sample(lat, lon, giorno, "prec", _mn_rgb_to_mm)
+    """Pioggia del giorno dalla mappa Italia MN (georef nota). Un solo PNG, in cache."""
+    pack = _mn_mappa_px(giorno, "prec", "italia")
+    if not pack:
+        return None
+    try:
+        w, h, buf = pack
+        x0, y0 = _mn_png_xy(lat, lon, w, h)
+        best = 0.0
+        for rad in (0, 3, 8, 16):
+            for dy in range(-rad, rad + 1):
+                for dx in range(-rad, rad + 1):
+                    if dx * dx + dy * dy > rad * rad:
+                        continue
+                    x = max(0, min(w - 1, x0 + dx))
+                    y = max(0, min(h - 1, y0 + dy))
+                    v = _mn_rgb_to_mm(_mn_get_px(buf, w, h, x, y))
+                    if v and float(v) >= 0.4:
+                        best = max(best, float(v))
+            if best >= 0.4 and rad >= 3:
+                break
+        return round(best, 1) if best >= 0.4 else 0.0
+    except Exception:
+        return None
 
 
 def mn_preload_mappe(giorni=30):
@@ -1026,10 +1196,7 @@ def mn_preload_mappe(giorni=30):
     fatti = 0
     def _one(i):
         g = (oggi - timedelta(days=i)).isoformat()
-        _mn_mappa_px(g, "prec")
-        _mn_mappa_px(g, "temp_min")
-        _mn_mappa_px(g, "temp_max")
-        _mn_mappa_px(g, "wind")
+        _mn_mappa_px(g, "prec", "italia")
     with ThreadPoolExecutor(max_workers=4) as ex:
         for _ in ex.map(_one, range(giorni)):
             fatti += 1
@@ -1155,46 +1322,91 @@ def dpc_serie_giorni(lat, lon, giorni=30, max_workers=5):
     return df
 
 
-def mn_pioggia_mappa(lat, lon, raggio=15):
-    """Legge le PNG mappe giornaliere MN (scala colori) sul punto, ultimi 30 giorni."""
+_MN_PIOGGIA = {}
+
+def _mn_pioggia_mappa_cached(lat_r, lon_r):
+    """Cache per punto. Non salva il risultato se le mappe non si sono scaricate."""
+    key = (int(lat_r), int(lon_r))
+    if key in _MN_PIOGGIA:
+        return _MN_PIOGGIA[key]
+    lat, lon = float(lat_r) / 100.0, float(lon_r) / 100.0
     oggi = datetime.now().date()
     rows = []
+    falliti = 0
     for i in range(30):
         g = oggi - timedelta(days=i)
         iso = g.isoformat()
-        mm = mn_prec_da_mappa(lat, lon, iso)
-        tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
-        tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
-        vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE))
-        if mm is None and tmin is None and tmax is None:
-            continue
+        try:
+            mm = mn_prec_da_mappa(lat, lon, iso)
+        except Exception:
+            mm = None
+        if mm is None:
+            falliti += 1
+            mm = 0.0
         rows.append({
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
-            "t_min": None if tmin is None else round(float(tmin), 1),
-            "t_max": None if tmax is None else round(float(tmax), 1),
-            "vento_max": None if vento is None else round(float(vento), 1),
+            "t_min": None,
+            "t_max": None,
+            "vento_max": None,
         })
     if not rows:
         return None
     df = pd.DataFrame(rows).sort_values("date")
     try:
         vals = pd.to_numeric(df["precip"], errors="coerce").fillna(0).round(1)
+        # serie "1.0 mm tutti i giorni" = pixel sbagliato (sfondo/legenda)
         if len(vals) >= 8:
-            vc = vals.value_counts()
-            top, ntop = float(vc.index[0]), int(vc.iloc[0])
-            # stesso mm tutti i giorni = pixel sbagliato (mare/legenda)
-            if top > 0 and ntop / len(vals) >= 0.55:
-                return None
-            tot_chk = float(vals.sum())
-            if tot_chk > 280 and vals.nunique() <= 4:
-                return None
+            # valori estremi da legenda (80–250 ripetuti) = bug lettura
+            vals = vals.where(vals < 80.0, 0.0)
+            vc = vals[vals > 0].value_counts()
+            if len(vc):
+                top, ntop = float(vc.index[0]), int(vc.iloc[0])
+                # solo i valori assurdi ripetuti (legenda) si azzerano, non la pioggia vera
+                if top >= 80.0 and ntop >= 4:
+                    vals = vals.where(vals != top, 0.0)
+            df = df.copy()
+            df["precip"] = vals.values
     except Exception:
         pass
-    tot = round(float(df["precip"].sum()), 1)
+    tot = round(float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum()), 1)
     oggi_ts = pd.Timestamp(oggi)
-    oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0]) if (df["date"] == oggi_ts).any() else 0.0
-    return {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows)}
+    oggi_mm = 0.0
+    try:
+        if (df["date"] == oggi_ts).any():
+            oggi_mm = float(df.loc[df["date"] == oggi_ts, "precip"].iloc[0])
+    except Exception:
+        pass
+    out = {"df": df, "oggi_mm": oggi_mm, "mese_mm": tot, "n": len(rows), "falliti": falliti}
+    if falliti < 15:
+        _MN_PIOGGIA[key] = out
+    return out
+
+
+def mn_pioggia_mappa(lat, lon, raggio=15):
+    """Legge le PNG mappe giornaliere MN sul punto, ultimi 30 giorni (unica via, con cache)."""
+    try:
+        lat_r = int(round(float(lat) * 100))
+        lon_r = int(round(float(lon) * 100))
+    except Exception:
+        return None
+    try:
+        out = _mn_pioggia_mappa_cached(lat_r, lon_r)
+    except Exception:
+        out = None
+    if not out:
+        return None
+    # copia df per non condividere tra thread
+    try:
+        return {
+            "df": out["df"].copy(),
+            "oggi_mm": out.get("oggi_mm"),
+            "mese_mm": out.get("mese_mm"),
+            "n": out.get("n"),
+            "falliti": out.get("falliti") or 0,
+        }
+    except Exception:
+        return out
 
 
 def _ultimi_30g(df):
@@ -1525,17 +1737,19 @@ SEED_LAZ201_AGO2026 = {
 
 
 def _carica_giorni_file():
+    """Carica sempre da disco (Flask non ha session Streamlit persistente)."""
     store = st.session_state.setdefault("mn_giorni", {})
     path = _path_giorni_salvati()
-    if path.exists() and not st.session_state.get("mn_giorni_file_ok"):
+    if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
+            if isinstance(data, dict) and data:
+                # merge: file ha priorità sui giorni presenti
                 store.update(data)
-            st.session_state["mn_giorni_file_ok"] = True
+                st.session_state["mn_giorni"] = store
+                st.session_state["mn_giorni_file_ok"] = True
         except Exception:
             pass
-        _salva_giorni_file()
     if not st.session_state.get("seed_laz201_ok"):
         for giorno, mm in SEED_LAZ201_AGO2026.items():
             chiave = f"laz201|{giorno}"
@@ -1543,7 +1757,6 @@ def _carica_giorni_file():
                 store[chiave] = {"date": giorno, "precip": mm}
         st.session_state["mn_giorni"] = store
         st.session_state["seed_laz201_ok"] = True
-        _salva_giorni_file()
     return store
 
 
@@ -1840,8 +2053,12 @@ def get_stazione_dati(station_id, days=30):
     return out
 
 
-def riepilogo_vento(df, giorni=10):
-    """Vento persistente secca il letto: fattore 1 = ok, verso 0 = nascite azzerate."""
+def riepilogo_vento(df, giorni=10, dopo_data=None):
+    """Vento *dopo* la pioggia utile: asciuga il letto e accorcia la buttata.
+
+    Il vento *prima* della spugnata non conta sul fattore (non c'era ancora
+    umidità da difendere). `dopo_data` = giorno della pioggia utile (incluso).
+    """
     vuoto = {
         "vento_medio_10g": None,
         "vento_max_10g": None,
@@ -1856,7 +2073,22 @@ def riepilogo_vento(df, giorni=10):
     }
     if df is None or "vento_max" not in getattr(df, "columns", []):
         return vuoto
-    coda = df.tail(giorni).copy()
+    serie = df.copy()
+    try:
+        serie["date"] = pd.to_datetime(serie["date"], errors="coerce")
+        serie = serie.dropna(subset=["date"]).sort_values("date")
+    except Exception:
+        pass
+    if dopo_data is not None:
+        try:
+            da = pd.Timestamp(dopo_data).normalize()
+            serie = serie[serie["date"] >= da]
+        except Exception:
+            pass
+    if len(serie) == 0:
+        vuoto["nota_vento"] = "Vento dopo la pioggia: n/d"
+        return vuoto
+    coda = serie.tail(giorni).copy()
     v = pd.to_numeric(coda["vento_max"], errors="coerce").fillna(0)
     if v.isna().all() or float(v.max()) == 0 and float(v.mean()) == 0:
         # potrebbe essere tutto zero vero, trattiamo comunque
@@ -1881,13 +2113,13 @@ def riepilogo_vento(df, giorni=10):
     if giorni_30 >= 4 and streak >= 3:
         fattore = min(fattore, 0.12)
     if fattore >= 0.85:
-        nota = "Vento debole, umidità del suolo tenuta"
+        nota = "Vento debole dopo la pioggia: umidità del suolo tenuta"
     elif fattore >= 0.5:
-        nota = "Vento fresco persistente: il letto si sta asciugando"
+        nota = "Vento fresco dopo la pioggia cumulata: il letto si sta asciugando"
     elif fattore >= 0.2:
-        nota = "Vento forte e ripetuto: nascite fortemente ridotte"
+        nota = "Vento forte dopo la pioggia: nascite fortemente ridotte"
     else:
-        nota = "Vento persistente >20–30 km/h: umidità quasi azzerata"
+        nota = "Vento persistente dopo la pioggia (>20–30 km/h): umidità quasi azzerata"
     picchi = []
     picco_data = None
     picco_kmh = None
@@ -2065,7 +2297,7 @@ def get_openmeteo_bundle(lat, lon, days=30):
         "past_days": min(days, 92),
         "forecast_days": 7,
         "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,temperature_2m_mean,wind_speed_10m_max",
-        "hourly": "soil_moisture_7_to_28cm",
+        "hourly": "soil_moisture_7_to_28cm,soil_temperature_6cm,soil_temperature_18cm",
         "timezone": "Europe/Rome",
         "models": "italia_meteo_arpae_icon_2i",
     }
@@ -2098,13 +2330,21 @@ def get_openmeteo_bundle(lat, lon, days=30):
             storico = storico.merge(daily[["date", "vento_max"]], on="date", how="left")
     forecast = daily[daily["date"] > oggi].head(7) if daily is not None else None
 
-    soil = None
-    if data.get("hourly") and data["hourly"].get("soil_moisture_7_to_28cm"):
-        soil_vals = [v for v in data["hourly"]["soil_moisture_7_to_28cm"] if v is not None]
-        if soil_vals:
-            soil = round(sum(soil_vals[-72:]) / max(1, len(soil_vals[-72:])), 3)
+    soil = {}
+    hourly = data.get("hourly") or {}
+    um = [v for v in (hourly.get("soil_moisture_7_to_28cm") or []) if v is not None]
+    if um:
+        soil["umidita"] = round(sum(um[-72:]) / max(1, len(um[-72:])), 3)
+    for key, nome in (("soil_temperature_6cm", "t6"), ("soil_temperature_18cm", "t18")):
+        vals = [v for v in (hourly.get(key) or []) if v is not None]
+        if vals:
+            soil[nome] = round(sum(vals[-24:]) / max(1, len(vals[-24:])), 1)
+    if soil.get("t6") is not None and soil.get("t18") is not None:
+        soil["t_suolo"] = round((soil["t6"] + soil["t18"]) / 2, 1)
+    elif soil.get("t6") is not None:
+        soil["t_suolo"] = soil["t6"]
     vento = riepilogo_vento(storico if storico is not None else daily)
-    return storico, forecast, soil, vento
+    return storico, forecast, (soil or None), vento
 
 
 def get_openmeteo_data(lat, lon, days=30):
@@ -2891,14 +3131,84 @@ def _pluvio_morto(df):
     return False
 
 
+
+
+def _serie_inaffidabile(df, fonte=""):
+    """True se la serie non è usabile (outlier, cumulativi, WC spazzatura)."""
+    if df is None or len(df) < 5 or "precip" not in getattr(df, "columns", []):
+        return True
+    try:
+        if getattr(df, "attrs", {}).get("inaffidabile"):
+            return True
+    except Exception:
+        pass
+    p = pd.to_numeric(df["precip"], errors="coerce").fillna(0.0)
+    # giorno >= 100 mm dopo sanifica = quasi sempre errore
+    if float(p.max()) >= 100.0:
+        return True
+    # troppi giorni estremi
+    if int((p >= 60.0).sum()) >= 3:
+        return True
+    fonte_l = (fonte or "").lower()
+    # WeatherCloud: più severo (spesso dati sballati)
+    if "weathercloud" in fonte_l or "weather cloud" in fonte_l:
+        if float(p.max()) >= 50.0:
+            return True
+        if float(p.sum()) > 250 and int((p >= 0.2).sum()) <= 4:
+            return True
+    return False
+
+def _sanifica_precip_df(df):
+    """Corregge serie buggate: cumulativi letti come giornalieri, outlier assurdì (>150 mm/g)."""
+    if df is None or len(df) == 0 or "precip" not in getattr(df, "columns", []):
+        return df
+    d = df.copy()
+    d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0.0)
+    d.loc[d["precip"] < 0, "precip"] = 0.0
+    try:
+        d = d.sort_values("date")
+    except Exception:
+        pass
+    p = d["precip"].astype(float).values
+    if len(p) >= 6:
+        # serie quasi sempre crescente e totale alto → probabilmente cumulativo
+        diffs = p[1:] - p[:-1]
+        non_decresc = int((diffs >= -1.0).sum())
+        if non_decresc >= max(4, int(0.75 * len(diffs))) and float(p[-1]) >= float(p[0]) + 30:
+            daily = [max(0.0, float(p[0]))]
+            for i in range(1, len(p)):
+                daily.append(max(0.0, float(p[i] - p[i - 1])))
+            d["precip"] = daily
+            p = d["precip"].astype(float).values
+    # tetto giornaliero realistico (sensori/unità sbagliate o cumulativi restanti)
+    d["precip"] = d["precip"].clip(lower=0.0, upper=120.0)
+    # se ha colpito il tetto 120 → sensore inaffidabile (segna il df)
+    try:
+        if float(d["precip"].max()) >= 119.5:
+            d.attrs["inaffidabile"] = True
+    except Exception:
+        pass
+    return d
+
+
 def _mappa_smentisce_stazione(df, lat, lon):
-    """Se la stazione ha giorni umidi che sulla mappa MN sul bosco non ci sono, è da scartare."""
+    """Scarta la stazione solo se la mappa MN sul bosco ha pioggia *credibile*
+    e contraddice il pluviometro.
+
+    Se la mappa sul punto è quasi secca (0–8 mm) e la stazione ha decine di mm,
+    è più probabile un pixel sbagliato (montagna Abruzzo, ombre legenda, ecc.):
+    in quel caso NON si smentisce e si tiene la stazione.
+    """
     if df is None or "precip" not in getattr(df, "columns", []):
         return None
     mappa = mn_pioggia_mappa(lat, lon, 15) or {}
     mdf = mappa.get("df")
     mm_m = mappa.get("mese_mm")
     if mdf is None or mm_m is None:
+        return None
+    try:
+        mm_m = float(mm_m)
+    except Exception:
         return None
     st = df.copy()
     st["date"] = pd.to_datetime(st["date"], errors="coerce").dt.normalize()
@@ -2907,813 +3217,1063 @@ def _mappa_smentisce_stazione(df, lat, lon):
     j = st.merge(mp[["date", "precip"]].rename(columns={"precip": "mm_mappa"}), on="date", how="left")
     j["precip"] = pd.to_numeric(j["precip"], errors="coerce").fillna(0)
     j["mm_mappa"] = pd.to_numeric(j["mm_mappa"], errors="coerce").fillna(0)
+    mm_st = float(j["precip"].sum())
+    # Mappa secca sul bosco + stazione bagnata → pixel MN inaffidabile, tieni stazione
+    if mm_m < 8.0 and mm_st >= 20.0:
+        return None
+    if mm_m < 5.0:
+        return None
     umidi = j[j["precip"] >= 4]
     if len(umidi) == 0:
         return None
     ghost = umidi[umidi["mm_mappa"] <= 1.0]
     ghost_mm = float(ghost["precip"].sum()) if len(ghost) else 0.0
-    mm_st = float(j["precip"].sum())
     smentita = False
-    if len(ghost) >= 3 or (len(ghost) >= 2 and ghost_mm >= 16):
+    # serve che la mappa abbia *anche* giorni umidi veri, non solo totali bassi
+    umidi_mappa = int((j["mm_mappa"] >= 3).sum())
+    if umidi_mappa < 2 and mm_m < mm_st * 0.5:
+        return None
+    if len(ghost) >= 3 or (len(ghost) >= 2 and ghost_mm >= 20):
         smentita = True
-    if mm_st >= 22 and float(mm_m) < max(10.0, mm_st * 0.30):
+    if mm_st >= 30 and mm_m < max(12.0, mm_st * 0.25) and umidi_mappa >= 3:
         smentita = True
     if not smentita:
         return None
     return mappa
 
 
-def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione=""):
-    info = {
-        "fonte": "ICON-2I 2km (modello sul bosco)",
-        "stazione": "n/d",
-        "distanza_km": None,
-        "quota_stazione": None,
-        "pioggia_modello_30g": None,
-        "pioggia_stazione_30g": None,
+
+# ---- Wunderground (stesso accesso della tabella web / wundermap, senza key utente) ----
+_WU_KEY_CACHE = {"key": None, "ts": 0}
+
+def _wu_api_key():
+    """Chiave pubblica usata dal sito WU (dashboard/table)."""
+    import time as _t
+    now = _t.time()
+    if _WU_KEY_CACHE["key"] and now - _WU_KEY_CACHE["ts"] < 3600:
+        return _WU_KEY_CACHE["key"]
+    try:
+        r = requests.get(
+            "https://www.wunderground.com/wundermap",
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        m = re.search(r'"API_KEY":"([^"]+)"', r.text or "")
+        if m:
+            _WU_KEY_CACHE["key"] = m.group(1)
+            _WU_KEY_CACHE["ts"] = now
+            return _WU_KEY_CACHE["key"]
+    except Exception:
+        pass
+    # fallback: chiave client nota (può ruotare)
+    return "f6d2efe5720d47ea92efe5720df7eaa8"
+
+
+def wu_stazioni_vicine(lat, lon, max_km=5.0, limit=15):
+    """PWS Wunderground vicino al punto (wundermap / location near)."""
+    key = _wu_api_key()
+    try:
+        r = requests.get(
+            "https://api.weather.com/v3/location/near",
+            params={
+                "geocode": f"{float(lat)},{float(lon)}",
+                "product": "pws",
+                "format": "json",
+                "apiKey": key,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.wunderground.com/wundermap",
+            },
+            timeout=20,
+        )
+        if r.status_code != 200:
+            return []
+        loc = (r.json() or {}).get("location") or {}
+        ids = loc.get("stationId") or []
+        names = loc.get("stationName") or []
+        lats = loc.get("latitude") or []
+        lons = loc.get("longitude") or []
+        dists = loc.get("distanceKm") or []
+        out = []
+        for i, sid in enumerate(ids):
+            try:
+                la = float(lats[i]) if i < len(lats) else None
+                lo = float(lons[i]) if i < len(lons) else None
+                d = float(dists[i]) if i < len(dists) else (
+                    distanza_km(lat, lon, la, lo) if la is not None and lo is not None else 999
+                )
+            except Exception:
+                continue
+            if d > float(max_km):
+                continue
+            out.append({
+                "id": str(sid),
+                "nome": str(names[i]) if i < len(names) else str(sid),
+                "lat": la,
+                "lon": lo,
+                "distanza_km": round(d, 2),
+            })
+        out.sort(key=lambda x: x["distanza_km"])
+        return out[:limit]
+    except Exception:
+        return []
+
+
+def wu_serie_giornaliera(station_id, days=30):
+    """Serie daily dalla stessa API della tabella /dashboard/pws/.../table/.../daily."""
+    key = _wu_api_key()
+    end = datetime.now().date()
+    start = end - timedelta(days=int(days or 30))
+    try:
+        r = requests.get(
+            "https://api.weather.com/v2/pws/history/daily",
+            params={
+                "stationId": station_id,
+                "format": "json",
+                "units": "m",
+                "startDate": start.strftime("%Y%m%d"),
+                "endDate": end.strftime("%Y%m%d"),
+                "apiKey": key,
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": f"https://www.wunderground.com/dashboard/pws/{station_id}/table",
+                "Accept": "application/json",
+            },
+            timeout=25,
+        )
+        if r.status_code != 200:
+            return None
+        obs = (r.json() or {}).get("observations") or []
+        recs = []
+        for o in obs:
+            try:
+                metric = o.get("metric") or {}
+                day = str(o.get("obsTimeLocal") or "")[:10]
+                if not day:
+                    continue
+                precip = metric.get("precipTotal")
+                if precip is None:
+                    precip = 0.0
+                recs.append({
+                    "date": pd.Timestamp(day),
+                    "precip": float(precip or 0),
+                    "t_max": metric.get("tempHigh"),
+                    "t_min": metric.get("tempLow"),
+                    "t_mean": metric.get("tempAvg"),
+                    "vento_max": (
+                        float(metric.get("windgustHigh") or 0)
+                        if metric.get("windgustHigh") is not None
+                        else (
+                            float(metric.get("windspeedHigh") or 0)
+                            if metric.get("windspeedHigh") is not None
+                            else None
+                        )
+                    ),
+                })
+            except Exception:
+                continue
+        if len(recs) < 5:
+            return None
+        return pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+    except Exception:
+        return None
+
+
+
+
+def _cf_registra_giorno_reale(station_id, scheda):
+    """Da oggi in poi: pioggia giornaliera CF = differenza del totale mensile.
+
+    Salva su disco (mn_giorni) la pioggia di oggi come:
+      max(0, mese_mm_oggi - mese_mm_ieri)   [stesso mese]
+    oppure usa oggi_mm se disponibile sulla scheda.
+    Al cambio mese: mese_mm è già il cumulato del nuovo mese.
+    """
+    scheda = scheda or {}
+    store = _carica_giorni_file() or {}
+    oggi = datetime.now().date()
+    oggi_s = oggi.isoformat()
+    try:
+        mese_mm = float(scheda["mese_mm"]) if scheda.get("mese_mm") is not None else None
+    except Exception:
+        mese_mm = None
+    try:
+        oggi_mm = float(scheda["oggi_mm"]) if scheda.get("oggi_mm") is not None else None
+    except Exception:
+        oggi_mm = None
+
+    meta_key = f"cf_meta:{station_id}"
+    meta = store.get(meta_key) if isinstance(store.get(meta_key), dict) else {}
+    prev_mese = meta.get("mese_mm")
+    prev_date = str(meta.get("date") or "")[:10]
+
+    daily = None
+    # 1) valore "oggi" della scheda se presente
+    if oggi_mm is not None:
+        daily = max(0.0, float(oggi_mm))
+    # 2) differenza sul cumulato mensile rispetto all'ultimo salvataggio
+    elif mese_mm is not None and prev_mese is not None and prev_date:
+        try:
+            d_prev = datetime.strptime(prev_date, "%Y-%m-%d").date()
+            if d_prev == oggi:
+                # già registrato oggi: non ricalcolare da zero, tieni o aggiorna
+                old = store.get(f"cf:{station_id}|{oggi_s}") or {}
+                if isinstance(old, dict) and old.get("precip") is not None:
+                    daily = max(0.0, float(old.get("precip") or 0))
+                # aggiorna con nuova differenza se il mensile è cresciuto da un salvataggio precedente nello stesso giorno
+                if float(mese_mm) >= float(prev_mese):
+                    # stesso giorno, più letture: incrementa
+                    delta = max(0.0, float(mese_mm) - float(prev_mese))
+                    if delta > 0:
+                        daily = max(0.0, float(old.get("precip") or 0)) + delta if isinstance(old, dict) else delta
+            elif d_prev.month == oggi.month and d_prev.year == oggi.year:
+                daily = max(0.0, float(mese_mm) - float(prev_mese))
+            else:
+                # nuovo mese: il mensile CF è già solo del mese nuovo
+                daily = max(0.0, float(mese_mm))
+        except Exception:
+            daily = None
+    elif mese_mm is not None and prev_mese is None:
+        # prima registrazione: non scaricare tutto il mese su oggi
+        daily = max(0.0, float(oggi_mm)) if oggi_mm is not None else 0.0
+
+    if daily is None:
+        daily = 0.0
+
+    key = f"cf:{station_id}|{oggi_s}"
+    store[key] = {
+        "date": oggi_s,
+        "precip": round(float(daily), 2),
+        "t_max": scheda.get("t_max"),
+        "t_min": scheda.get("t_min"),
+        "t_med": scheda.get("t_med"),
+        "vento_max": scheda.get("vento_max"),
+        "mese_mm": mese_mm,
+        "fonte": "cf_diff_mensile",
     }
+    store[meta_key] = {
+        "date": oggi_s,
+        "mese_mm": mese_mm,
+        "oggi_mm": oggi_mm,
+    }
+    try:
+        st.session_state["mn_giorni"] = store
+    except Exception:
+        pass
+    try:
+        _salva_giorni_file()
+    except Exception:
+        pass
+    return store
+
+
+def _cf_distribuisci_mese(mese_mm, oggi_mm, days, lat, lon, scheda=None):
+    """Trasforma il totale mensile CF in una serie giornaliera.
+
+    Caput Frigoris sulla scheda pubblica dà solo oggi/mese/anno, non lo storico
+    giorno per giorno. Per non mettere tutto sul giorno corrente (che sballa
+    le buttate):
+      1) se c'è la mappa MN sul punto, distribuisce i mm mensili *in proporzione*
+         ai giorni piovosi della mappa
+      2) altrimenti distribuisce in modo uniforme sui giorni del mese corrente
+      3) il valore "oggi" della scheda, se presente, viene impostato su oggi
+    """
+    scheda = scheda or {}
+    oggi = datetime.now().date()
+    try:
+        mese_mm = float(mese_mm or 0)
+    except Exception:
+        mese_mm = 0.0
+    try:
+        oggi_mm = float(oggi_mm) if oggi_mm is not None else None
+    except Exception:
+        oggi_mm = None
+
+    # giorni da coprire (max days, ma almeno il mese corrente)
+    n = max(int(days or 30), 1)
+    date_list = [oggi - timedelta(days=i) for i in range(n)]
+    date_list = list(reversed(date_list))  # cronologico
+
+    weights = None
+    # 1) profilo dalla mappa MN
+    try:
+        mappa = mn_pioggia_mappa(lat, lon, min(n, 30)) or {}
+        mdf = mappa.get("df")
+        if mdf is not None and len(mdf) >= 5:
+            tmp = mdf.copy()
+            tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce").dt.normalize()
+            tmp["precip"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            by = {pd.Timestamp(r["date"]).date(): float(r["precip"]) for _, r in tmp.iterrows()}
+            w = [max(0.0, by.get(d, 0.0)) for d in date_list]
+            if sum(w) >= 1.0:
+                weights = w
+    except Exception:
+        weights = None
+
+    # 2) uniforme sul mese corrente (giorni già trascorsi)
+    if weights is None:
+        weights = []
+        for d in date_list:
+            # solo giorni del mese corrente pesano; gli altri a 0
+            if d.month == oggi.month and d.year == oggi.year:
+                weights.append(1.0)
+            else:
+                weights.append(0.0)
+        if sum(weights) < 1:
+            weights = [1.0] * len(date_list)
+
+    s = float(sum(weights)) or 1.0
+    precip = [mese_mm * (w / s) for w in weights]
+
+    # oggi: se la scheda ha oggi_mm, usalo (più fedele)
+    if oggi_mm is not None and len(precip):
+        # sostituisci solo il giorno di oggi, poi rinormalizza leggermente
+        # se la somma resterebbe molto diversa dal mese, tieni oggi e scala il resto
+        idx_oggi = len(date_list) - 1  # date_list finisce con oggi? reversed from oggi-n ... 
+        # date_list[0] = oldest, date_list[-1] = oggi
+        if date_list[-1] == oggi:
+            resto_target = max(0.0, mese_mm - max(0.0, oggi_mm))
+            precip[-1] = max(0.0, oggi_mm)
+            altri = precip[:-1]
+            s_altri = sum(altri) or 0.0
+            if s_altri > 0 and resto_target >= 0:
+                factor = resto_target / s_altri
+                precip = [x * factor for x in altri] + [precip[-1]]
+            elif resto_target == 0:
+                precip = [0.0] * (len(precip) - 1) + [precip[-1]]
+
+    recs = []
+    for d, mm in zip(date_list, precip):
+        recs.append({
+            "date": pd.Timestamp(d),
+            "precip": round(float(mm), 2),
+            "t_max": scheda.get("t_max"),
+            "t_min": scheda.get("t_min"),
+            "t_mean": scheda.get("t_med"),
+            "vento_max": scheda.get("vento_max"),
+        })
+    return pd.DataFrame(recs).sort_values("date")
+
+
+def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, nome_zona="", regione="", solo_mappe=False):
+    """Stazioni affidabili entro 5 km (tutte le regioni), poi mappa MN se scoperto.
+
+    Ordine:
+      1) Caput Frigoris / MeteoNetwork / WeatherCloud / Wunderground entro max_km (default 5)
+      2) Scarta pluviometri morti (quasi solo zeri)
+      3) Se nessuna stazione valida → mappa giornaliera MeteoNetwork sul punto
+    """
     forecast = None
     soil = None
     vento = riepilogo_vento(None)
+    lat = float(lat)
+    lon = float(lon)
+    days = int(days or 30)
+    max_km = float(max_km_stazione if max_km_stazione is not None else 5)
+    if max_km <= 0:
+        max_km = 5.0
+    # utente: non oltre 5 km per stazioni "vicine"
+    max_km = min(max_km, 5.0)
+    quota_f = float(quota) if quota is not None else None
 
-    # niente Open-Meteo in calcolo: rallentava ogni zona e i mm/°C arrivano dalle stazioni
-    storico_om, forecast, soil = None, None, None
-
-    if storico_om is not None and "precip" in storico_om.columns:
-        info["pioggia_modello_30g"] = round(float(storico_om["precip"].sum(skipna=True)), 1)
-
-    def _mm(df):
-        if df is None or "precip" not in df.columns:
-            return None
-        return round(float(df["precip"].sum(skipna=True)), 1)
-
-    def _giorni_lista(df):
-        """Solo piogge degli ultimi 30 giorni (>= 0,2 mm)."""
-        out = []
-        if df is None or len(df) == 0 or "precip" not in df.columns:
-            return out
-        d = df.copy()
-        d["date"] = pd.to_datetime(d["date"]).dt.normalize()
-        d["precip"] = pd.to_numeric(d["precip"], errors="coerce").fillna(0)
-        oggi = pd.Timestamp(datetime.now().date())
-        taglio = oggi - pd.Timedelta(days=30)
-        d = d[(d["date"] >= taglio) & (d["date"] <= oggi)]
-        for _, rr in d.sort_values("date").iterrows():
-            mm = float(rr["precip"] or 0)
-            if mm >= 0.2:
-                out.append(f"{pd.to_datetime(rr['date']).date()}: {mm:.1f} mm")
-        return out
-
-    # Caput Frigoris: nome zona oppure stazione entro 5 km
-    nome_l = (nome_zona or "").lower()
-    cf_id = None
-    cf_meta = None
-    for chiave, sid in CAPUT_FRIGORIS.items():
-        if chiave in nome_l:
-            cf_id = sid
-            break
-    if not cf_id:
-        cf_meta = cf_stazione_vicina(lat, lon, max_km=5.0)
-        if cf_meta:
-            cf_id = cf_meta["id"]
-    if cf_id:
-        cf = cf_scheda(cf_id) or {"nome": cf_id, "oggi_mm": None, "mese_mm": None, "anno_mm": None}
-        store = _carica_giorni_file()
-        rows = []
-        pref = f"{cf_id}|"
-        for k, v in (store or {}).items():
-            if not str(k).startswith(pref):
-                continue
-            try:
-                rec = {
-                    "date": pd.Timestamp(str((v or {}).get("date") or k.split("|", 1)[-1])),
-                    "precip": float((v or {}).get("precip") or 0),
-                }
-                for kk in ("t_max", "t_min", "t_med", "vento_max"):
-                    if v and v.get(kk) is not None:
-                        rec[kk] = float(v[kk])
-                rows.append(rec)
-            except Exception:
-                pass
-        oggi_d = datetime.now().date().isoformat()
-        if cf.get("oggi_mm") is not None:
-            rec_oggi = {
-                "date": oggi_d,
-                "precip": float(cf.get("oggi_mm") or 0),
-            }
-            for kk in ("t_max", "t_min", "t_med", "vento_max"):
-                if cf.get(kk) is not None:
-                    rec_oggi[kk] = cf[kk]
-            store[f"{cf_id}|{oggi_d}"] = rec_oggi
-            ieri = (datetime.now().date() - timedelta(days=1)).isoformat()
-            if cf.get("mese_mm") is not None:
-                mese_cf = float(cf["mese_mm"])
-                oggi_mm = float(cf.get("oggi_mm") or 0)
-                somma_mese = 0.0
-                for k, v in store.items():
-                    if not str(k).startswith(pref):
-                        continue
-                    d = str((v or {}).get("date") or k.split("|", 1)[-1])[:10]
-                    if d[:7] == oggi_d[:7] and d != ieri:
-                        try:
-                            somma_mese += float((v or {}).get("precip") or 0)
-                        except Exception:
-                            pass
-                resto = round(mese_cf - somma_mese, 1)
-                if resto >= 0.2:
-                    rec_ieri = {"date": ieri, "precip": resto}
-                    if f"{cf_id}|{ieri}" not in store:
-                        store[f"{cf_id}|{ieri}"] = rec_ieri
-                        rows.append({"date": pd.Timestamp(ieri), "precip": resto})
-            st.session_state["mn_giorni"] = store
-            _salva_giorni_file()
-            rows.append({
-                "date": pd.Timestamp(oggi_d),
-                "precip": rec_oggi["precip"],
-                **{k: rec_oggi[k] for k in ("t_max", "t_min", "t_med", "vento_max") if k in rec_oggi},
-            })
-        df_cf = None
-        if rows:
-            df_cf = pd.DataFrame(rows).drop_duplicates("date").sort_values("date")
-            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
-            df_cf = df_cf[df_cf["date"] >= taglio]
-        giorni = []
-        if df_cf is not None:
-            for _, rr in df_cf.iterrows():
-                if float(rr.get("precip") or 0) >= 0.2:
-                    giorni.append(f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm")
-        info = {
-            "fonte": (
-                f"Caput Frigoris {cf.get('nome')} ({cf_id})"
-                + (f" · oggi {cf.get('oggi_mm')} mm" if cf.get("oggi_mm") is not None else "")
-                + (f" · mese {cf.get('mese_mm')} mm" if cf.get("mese_mm") is not None else "")
-                + " · agosto da archivio locale"
-            ),
-            "stazione": cf.get("nome") or cf_id,
-            "distanza_km": (cf_meta or {}).get("distanza_km") or 0,
-            "pioggia_stazione_30g": _mm(df_cf),
-            "giorni_pluviometro": giorni or [
-                f"oggi: {cf.get('oggi_mm')} mm",
-                f"mese in corso: {cf.get('mese_mm')} mm",
-            ],
-        }
-        if df_cf is not None and len(df_cf):
-            return df_cf, info, forecast, soil, vento
-
-    # Radar-DPC (CUM24): pioggia REALE radar + pluviometri, copertura nazionale.
-    # Priorità sopra le stazioni scraped: qui il dato è misurato sul punto esatto,
-    # non ricostruito da una stazione a km di distanza o da un modello meteo.
-    try:
-        df_dpc = dpc_serie_giorni(lat, lon, 30)
-    except Exception:
-        df_dpc = None
-    if df_dpc is not None and len(df_dpc) >= 20:
-        tot_dpc = round(float(df_dpc["precip"].sum()), 1)
-        giorni_dpc = [
-            f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-            for _, rr in df_dpc.iterrows()
-            if float(rr.get("precip") or 0) >= 0.2
-        ]
-        info = {
-            "fonte": f"Radar-DPC CUM24 (radar + pluviometri, dato reale) · {len(df_dpc)}/30 giorni",
-            "stazione": "Rete radar nazionale Protezione Civile",
-            "distanza_km": 0,
-            "quota_stazione": None,
-            "pioggia_modello_30g": None,
-            "pioggia_stazione_30g": tot_dpc,
-            "giorni_pluviometro": giorni_dpc,
-        }
-        return df_dpc, info, forecast, soil, vento
-
-    # MN e WC: entro 8 km se i dati sono pieni
-    RAGGIO_MN_BUONO = 5.0
-
-    def _giorni_pieni(dfx):
-        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
-            return 0
-        try:
-            dd = dfx.copy()
-            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
-            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
-            dd = dd[dd["date"] >= taglio]
-            p = pd.to_numeric(dd["precip"], errors="coerce")
-            if "t_max" in dd.columns:
-                t = pd.to_numeric(dd["t_max"], errors="coerce")
-                ok = p.notna() & ~((p <= 0) & t.isna())
-            else:
-                ok = p.notna()
-            return int(ok.sum())
-        except Exception:
-            return 0
-
-    def _giorni_recenti(dfx, giorni=12):
-        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
-            return 0
-        try:
-            dd = dfx.copy()
-            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
-            taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=giorni)
-            dd = dd[dd["date"] >= taglio]
-            p = pd.to_numeric(dd["precip"], errors="coerce")
-            if "t_max" in dd.columns:
-                t = pd.to_numeric(dd["t_max"], errors="coerce")
-                ok = p.notna() & ~((p <= 0) & t.isna())
-            else:
-                ok = p.notna()
-            return int(ok.sum())
-        except Exception:
-            return 0
-
-    def _affidabilita(dfx, online=True, dist=5.0):
-        n = _giorni_pieni(dfx)
-        if n < 8:
-            return -1.0
-        try:
-            mm = float(pd.to_numeric(dfx["precip"], errors="coerce").sum())
-        except Exception:
-            mm = 0.0
-        has_t = False
-        has_v = False
-        try:
-            has_t = "t_max" in dfx.columns and pd.to_numeric(dfx["t_max"], errors="coerce").notna().sum() >= 5
-            has_v = "vento_max" in dfx.columns and pd.to_numeric(dfx["vento_max"], errors="coerce").notna().sum() >= 5
-        except Exception:
-            pass
-        score = n * 3.0 + min(mm, 250) * 0.6
-        if has_t:
-            score += 18
-        if has_v:
-            score += 10
-        if online:
-            score += 8
-        d = float(dist or 5)
-        if d <= 2.0:
-            score += 25
-        elif d <= 3.5:
-            score += 8
-        else:
-            score -= (d - 2.0) * 6.0
-        return score
-
-    def _mese_corrente_ok(dfx):
-        if dfx is None or len(dfx) == 0 or "precip" not in getattr(dfx, "columns", []):
-            return False
-        try:
-            dd = dfx.copy()
-            dd["date"] = pd.to_datetime(dd["date"]).dt.normalize()
-            oggi = pd.Timestamp(datetime.now().date())
-            dd = dd[(dd["date"].dt.year == oggi.year) & (dd["date"].dt.month == oggi.month)]
-            p = pd.to_numeric(dd["precip"], errors="coerce")
-            validi = int(p.notna().sum())
-            serve = max(4, int(oggi.day * 0.45))
-            return validi >= serve
-        except Exception:
-            return False
-
-    def _mn_viva(dfx):
-        return _giorni_pieni(dfx) >= 10 and _giorni_recenti(dfx) >= 6 and _mese_corrente_ok(dfx)
-
-    cat_mn_pre = mn_catalogo_pubblico()
-    mn_min = 999.0
-    mn_near = None
-    n_mn = 0
-    mm_mn = 0.0
-    df_mn_peek = None
-    if cat_mn_pre:
-        cand_mn = []
-        for s in cat_mn_pre:
-            dkm = distanza_km(lat, lon, s["lat"], s["lon"])
-            if dkm <= RAGGIO_MN_BUONO:
-                cand_mn.append((dkm, s))
-        cand_mn.sort(key=lambda x: x[0])
-        if cand_mn:
-            mn_min = cand_mn[0][0]
-        for dkm, s in cand_mn[:5]:
-            df_try = mn_archivio_pubblico(s.get("code"), 2)
-            if _mn_viva(df_try):
-                mn_near = s
-                mn_min = dkm
-                df_mn_peek = df_try
-                n_mn = _giorni_pieni(df_try)
-                try:
-                    mm_mn = float(pd.to_numeric(df_try["precip"], errors="coerce").sum())
-                except Exception:
-                    mm_mn = 0.0
-                break
-        if mn_near is None and cand_mn:
-            mn_near = cand_mn[0][1]
-            mn_min = cand_mn[0][0]
-            df_mn_peek = mn_archivio_pubblico(mn_near.get("code"), 2)
-            n_mn = _giorni_pieni(df_mn_peek)
-    n_mn_rec = _giorni_recenti(df_mn_peek) if df_mn_peek is not None else 0
-    mn_buchi = not _mn_viva(df_mn_peek) if df_mn_peek is not None else True
-    RAGGIO_WC = 8.0
-    wc_piu_pioggia = False
-    if usa_wc:
-        try:
-            cat_peek = wc_catalogo()
-            candid = []
-            for staz in cat_peek:
-                dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-                if dkm <= RAGGIO_WC:
-                    candid.append((dkm, staz))
-            candid.sort(key=lambda x: x[0])
-            for dkm, staz in candid[:4]:
-                df_c = wc_mese_mm(staz.get("id") or staz.get("code"))
-                if df_c is None or "precip" not in df_c.columns:
-                    continue
-                n_c = _giorni_pieni(df_c)
-                sc_c = _affidabilita(df_c, online=bool(staz.get("online", True)), dist=dkm)
-                sc_m = _affidabilita(df_mn_peek, online=True, dist=mn_min)
-                if n_c >= 12 and (mn_buchi or sc_c > sc_m):
-                    wc_piu_pioggia = True
-                    break
-        except Exception:
-            wc_piu_pioggia = False
-    ha_mn_vicina = (
-        mn_min <= RAGGIO_MN_BUONO
-        and n_mn >= 10
-        and not mn_buchi
-        and not wc_piu_pioggia
-    )
-    _nz = (nome_zona or "").lower()
-    forza_agnone = "agnone" in _nz
-    d_gm = distanza_km(lat, lon, 41.350254, 14.365734)
-    d_vt = distanza_km(lat, lon, 41.348467, 14.525056)
-    forza_piedimonte = (
-        "alife" not in _nz
-        and (
-            d_gm <= 5.0
-            or "piedimonte" in _nz
-            or "castello del matese" in _nz
-            or "lago del matese" in _nz
-            or "bocca della selva" in _nz
-            or "san gregorio matese" in _nz
-        )
-    )
-    if forza_agnone:
-        ha_mn_vicina = True
-        wc_piu_pioggia = False
-    forza_cusano = d_vt <= 5.0 or (("cusano" in _nz or "casano" in _nz) and ("mutri" in _nz or "mutria" in _nz))
-    if forza_piedimonte and forza_cusano:
-        if d_vt < d_gm:
-            forza_piedimonte = False
-        else:
-            forza_cusano = False
-    if usa_wc:
-        try:
-            cand_wu = [s for s in wu_vicine(lat, lon) if float(s.get("distanza_km") or 99) <= 5.0]
-            migliore_wu = None
-            for s in cand_wu[:8]:
-                dfw = wu_mese(s.get("code"), 30)
-                if dfw is None or len(dfw) < 12:
-                    continue
-                if _pluvio_morto(dfw):
-                    continue
-                n_c = _giorni_pieni(dfw)
-                if n_c < 12 or not _mese_corrente_ok(dfw):
-                    continue
-                mm_c = float(pd.to_numeric(dfw["precip"], errors="coerce").sum())
-                d_wu = float(s.get("distanza_km") or 99)
-                fascia = 0 if d_wu <= 2.0 else 1
-                rank = (-fascia, n_c, -d_wu, mm_c)
-                if migliore_wu is None or rank > migliore_wu[0]:
-                    migliore_wu = (rank, s, dfw, mm_c)
-            if migliore_wu:
-                fascia_wu = -migliore_wu[0][0]
-                n_wu = migliore_wu[0][1]
-                dist_wu = -migliore_wu[0][2]
-                mm_wu_r = migliore_wu[0][3]
-                sc_wu = _affidabilita(migliore_wu[2], online=True, dist=dist_wu)
-                sc_mn = _affidabilita(df_mn_peek, online=True, dist=mn_min)
-                wu_ok = n_wu >= 12 and _mese_corrente_ok(migliore_wu[2])
-                vicina_wu = wu_ok and dist_wu <= 2.0 and (mn_buchi or mn_min > 2.0)
-                if dist_wu <= 5.0 and wu_ok and (not ha_mn_vicina or vicina_wu or sc_wu > sc_mn):
-                    s, df_wu, mm_wu = migliore_wu[1], migliore_wu[2], migliore_wu[3]
-                    giorni = []
-                    for _, row in df_wu.iterrows():
-                        try:
-                            if float(row.get("precip") or 0) >= 0.2:
-                                giorni.append(f"{pd.Timestamp(row['date']).date().isoformat()}: {float(row['precip']):.1f} mm")
-                        except Exception:
-                            continue
-                    info = {
-                        "fonte": f"Wunderground {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km",
-                        "stazione": f"{s.get('nome')} {s.get('code')}",
-                        "distanza_km": s.get("distanza_km"),
-                        "giorni_pluviometro": giorni,
-                        "pioggia_stazione_30g": round(mm_wu, 1),
-                    }
-                    return df_wu, info, forecast, soil, vento
-        except Exception:
-            pass
-        cat = wc_catalogo() if (forza_piedimonte or forza_cusano) else []
-        raggio_vicino = 5.0
-        tutte_dist = []
-        for staz in cat:
-            dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-            if dkm <= 5.0:
-                s2 = dict(staz)
-                s2["distanza_km"] = round(dkm, 1)
-                tutte_dist.append(s2)
-        tutte_dist.sort(key=lambda x: x["distanza_km"])
-        vicine_vicine = [x for x in tutte_dist if x["distanza_km"] <= raggio_vicino]
-        nome_l = (nome_zona or "").lower()
-        if forza_piedimonte:
-            gm = None
-            for staz in cat:
-                code = str(staz.get("code") or "").upper()
-                nid = str(staz.get("id") or "")
-                nn = (staz.get("nome") or "").lower()
-                if code == "3XWWUH5" or nid == "8581011017" or "gian marco" in nn:
-                    gm = dict(staz)
-                    gm["distanza_km"] = round(distanza_km(lat, lon, staz["lat"], staz["lon"]), 1)
-                    break
-            if gm is None:
-                gm = {
-                    "code": "3XWWUH5",
-                    "id": "8581011017",
-                    "nome": "Gian Marco",
-                    "lat": 41.350254,
-                    "lon": 14.365734,
-                    "online": True,
-                    "distanza_km": round(distanza_km(lat, lon, 41.350254, 14.365734), 1),
-                }
-            vicine_vicine = [gm]
-        if forza_cusano:
-            vt = None
-            for staz in cat:
-                code = str(staz.get("code") or "").upper()
-                nid = str(staz.get("id") or "")
-                nn = (staz.get("nome") or "").lower()
-                if code == "3EE8J9B" or nid == "7400786303" or "vitelli" in nn:
-                    vt = dict(staz)
-                    vt["distanza_km"] = round(distanza_km(lat, lon, staz["lat"], staz["lon"]), 1)
-                    break
-            if vt is None:
-                vt = {
-                    "code": "3EE8J9B",
-                    "id": "7400786303",
-                    "nome": "Giuseppe Vitelli",
-                    "lat": 41.348467,
-                    "lon": 14.525056,
-                    "online": True,
-                    "distanza_km": round(distanza_km(lat, lon, 41.348467, 14.525056), 1),
-                }
-            vicine_vicine = [vt]
-        if any(k in nome_l for k in ("cusano", "mutri", "casano")) and not forza_cusano:
-            preferite = [x for x in vicine_vicine if "vitelli" in (x.get("nome") or "").lower() or str(x.get("code") or "").upper() == "3EE8J9B"]
-            altre = [x for x in vicine_vicine if x not in preferite]
-            vicine_vicine = preferite + altre
-        # WC fino a 10 km se MN è oltre 8 km dal bosco
-        pool = vicine_vicine[:3]
-        if pool:
-            migliore = None
-            df_wc = None
-            for cand in pool:
-                df_c = wc_mese_mm(cand.get("id") or cand["code"])
-                mm_c = 0.0
-                n_c = 0
-                if df_c is not None and len(df_c) and "precip" in df_c.columns:
-                    mm_c = float(df_c["precip"].sum(skipna=True))
-                    n_c = _giorni_pieni(df_c)
-                dist = float(cand.get("distanza_km") or 99)
-                rank = (_affidabilita(df_c, online=bool(cand.get("online", True)), dist=dist), n_c, mm_c, -dist)
-                if migliore is None or rank > migliore[0]:
-                    migliore = (rank, cand, df_c, mm_c)
-            s = migliore[1] if migliore else pool[0]
-            df_wc = wc_mese_pioggia(s.get("id") or s.get("code")) if s else None
-            if df_wc is None and migliore:
-                df_wc = migliore[2]
-            oggi = wc_oggi(s.get("id") or s["code"])
-            if df_wc is not None and len(df_wc):
-                df_mm = df_wc.copy()
-                df_mm["date"] = pd.to_datetime(df_mm["date"]).dt.normalize()
-                if oggi and oggi.get("rain") is not None:
-                    try:
-                        oggi_d = pd.Timestamp(datetime.now().date())
-                        mask = df_mm["date"] == oggi_d
-                        if mask.any():
-                            df_mm.loc[mask, "precip"] = float(oggi["rain"])
-                    except Exception:
-                        pass
-                giorni_txt = _giorni_lista(df_mm)
-                n_pluvio = int(df_mm["precip"].notna().sum())
-                if storico_om is not None:
-                    serie = storico_om.copy()
-                    serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
-                    for _, row in df_mm.iterrows():
-                        mask = serie["date"] == row["date"]
-                        if mask.any():
-                            serie.loc[mask, "precip"] = row["precip"]
-                    df_out = serie
+    if solo_mappe:
+        zona, *_ = _mn_zona(lat, lon)
+        mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+        mdf = mappa.get("df")
+        mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
+        if mdf is not None and len(mdf):
+            giorni = []
+            tmp = mdf.copy()
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
+                giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
+            if not giorni:
+                if int(mappa.get("falliti") or 0) >= 15:
+                    giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30)"]
                 else:
-                    df_out = df_mm
-                oggi_mm = oggi.get("rain") if oggi else None
-                fonte = (
-                    f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km · più mm nel raggio 5 km"
-                    + (f" · oggi {oggi_mm} mm" if oggi_mm is not None else "")
-                    + f" · {n_pluvio} gg da pluviometro"
-                )
-                info = _info_stazione(s, fonte)
-                info["giorni_pluviometro"] = giorni_txt
-                info["pioggia_modello_30g"] = (
-                    round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
-                )
-                info["pioggia_stazione_30g"] = _mm(df_mm)
-                if "vento_max" in df_out.columns:
-                    vento = riepilogo_vento(df_out)
-                if oggi and oggi.get("wspdhi") is not None:
-                    try:
-                        vento = {
-                            **(vento or {}),
-                            "oggi_kmh": float(oggi.get("wspdhi") or oggi.get("wspd") or 0) * 3.6,
-                        }
-                    except Exception:
-                        pass
-                return df_out, info, forecast, soil, vento
-            # stazione WC c'è ma il mese non è arrivato: uso comunque quella più vicina + modello
-            if storico_om is not None:
-                fonte = f"WeatherCloud {s.get('nome')} a {s.get('distanza_km')} km · mm mese non letti, uso modello sul punto stazione"
-                info = _info_stazione(s, fonte)
-                return storico_om, info, forecast, soil, vento
-
-    # 1) MeteoNetwork da lista pubblica (stessa pagina /it/stations-list)
-    cat_mn = None if (forza_piedimonte or forza_cusano) else mn_catalogo_pubblico()
-    if cat_mn:
-        vicine_pub = []
-        nome_l0 = (nome_zona or "").lower()
-        if any(k in nome_l0 for k in ("bojano", "boiano", "spinete")):
-            vicine_pub.append({
-                "code": "mls065",
-                "nome": "Bojano - Loc.Massari",
-                "lat": 41.486,
-                "lon": 14.455,
-                "distanza_km": round(distanza_km(lat, lon, 41.486, 14.455), 1),
-            })
-        if "amatrice" in nome_l0:
-            vicine_pub.append({
-                "code": "laz201",
-                "nome": "Amatrice - BAGNOLO",
-                "lat": 42.630707,
-                "lon": 13.232802,
-                "distanza_km": round(distanza_km(lat, lon, 42.630707, 13.232802), 1),
-            })
-            for staz in cat_mn:
-                if str(staz.get("code") or "").lower() == "laz201":
-                    continue
-                nn = (staz.get("nome") or "").lower()
-                if "bagnolo" in nn or "amatrice" in nn:
-                    dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-                    if dkm <= 20:
-                        s2 = dict(staz)
-                        s2["distanza_km"] = round(dkm, 1)
-                        vicine_pub.append(s2)
-            vicine_pub.sort(key=lambda x: (0 if "laz201" == str(x.get("code") or "").lower() else 1, x["distanza_km"]))
-        if not vicine_pub:
-            for staz in cat_mn:
-                dkm = distanza_km(lat, lon, staz["lat"], staz["lon"])
-                if dkm <= RAGGIO_MN_BUONO:
-                    s2 = dict(staz)
-                    s2["distanza_km"] = round(dkm, 1)
-                    vicine_pub.append(s2)
-            vicine_pub.sort(key=lambda x: x["distanza_km"])
-        if not vicine_pub and cat_mn:
-            nome_l = (nome_zona or "").lower()
-            chiavi = [w for w in re.split(r"[^a-zàèéìòù]+", nome_l) if len(w) >= 5]
-            for s0 in cat_mn:
-                nn = (s0.get("nome") or "").lower()
-                dkm = distanza_km(lat, lon, s0["lat"], s0["lon"])
-                if any(k in nn for k in chiavi) and dkm <= RAGGIO_MN_BUONO:
-                    s0 = dict(s0)
-                    s0["distanza_km"] = round(dkm, 1)
-                    vicine_pub.append(s0)
-                    break
-            if not vicine_pub:
-                extra = []
-                for s0 in cat_mn:
-                    dkm = distanza_km(lat, lon, s0["lat"], s0["lon"])
-                    extra.append((dkm, s0))
-                extra.sort(key=lambda x: x[0])
-                if extra and extra[0][0] <= RAGGIO_MN_BUONO:
-                    s0 = dict(extra[0][1])
-                    s0["distanza_km"] = round(extra[0][0], 1)
-                    vicine_pub.append(s0)
-        if forza_agnone and cat_mn:
-            for s0 in cat_mn:
-                if str(s0.get("code") or "").lower() == "mls026":
-                    s0 = dict(s0)
-                    s0["distanza_km"] = round(distanza_km(lat, lon, s0["lat"], s0["lon"]), 1)
-                    vicine_pub = [s0] + [x for x in vicine_pub if str(x.get("code") or "").lower() != "mls026"]
-                    break
-        if vicine_pub:
-            s = None
-            for cand in vicine_pub[:6]:
-                df_chk = mn_archivio_pubblico(cand.get("code"), 2)
-                if forza_agnone and str(cand.get("code") or "").lower() == "mls026" and df_chk is not None and len(df_chk):
-                    s = cand
-                    break
-                if _mn_viva(df_chk):
-                    s = cand
-                    break
-            if s is not None:
-                prefer = {str(x.get("code") or "").lower(): x for x in vicine_pub}
-                nome_l = (nome_zona or "").lower()
-                if "agnone" in nome_l or forza_agnone:
-                    s_ag = prefer.get("mls026")
-                    if s_ag is None:
-                        for s0 in cat_mn or []:
-                            if str(s0.get("code") or "").lower() == "mls026":
-                                s_ag = dict(s0)
-                                s_ag["distanza_km"] = round(
-                                    distanza_km(lat, lon, s0["lat"], s0["lon"]), 1
-                                )
-                                break
-                    if s_ag is not None:
-                        s = s_ag
-                if "mls071" in prefer and (
-                    "capracotta" in nome_l
-                    or str(s.get("code") or "").lower() in {"mls052", "mls064"}
-                ):
-                    s2 = prefer["mls071"]
-                    if _mn_viva(mn_archivio_pubblico(s2.get("code"), 2)):
-                        s = s2
-                if any(k in nome_l for k in ("bojano", "boiano", "spinete")) and "mls065" in prefer:
-                    s2 = prefer["mls065"]
-                    if _mn_viva(mn_archivio_pubblico(s2.get("code"), 2)):
-                        s = s2
-                mesi_arch = 3 if str(s.get("code") or "").lower() == "laz201" else 2
-                df_arch = mn_archivio_pubblico(s["code"], mesi_arch)
-                if df_arch is None and mn_token:
-                    df_arch = mn_dati_stazione(mn_token, s["code"], days)
-                if not _mn_viva(df_arch) and not (forza_agnone and str(s.get("code") or "").lower() == "mls026"):
-                    s = None
-                else:
-                    serie = df_arch
-                    if serie is not None and len(serie):
-                        serie = serie.copy()
-                        serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
-                        taglio = pd.Timestamp(datetime.now().date()) - pd.Timedelta(days=30)
-                        serie = serie[serie["date"] >= taglio]
-                        oggi_d = pd.Timestamp(datetime.now().date())
-                        if s.get("oggi_mm") is not None:
-                            if (serie["date"] == oggi_d).any():
-                                serie.loc[serie["date"] == oggi_d, "precip"] = s["oggi_mm"]
-                            else:
-                                extra = {"date": oggi_d, "precip": float(s["oggi_mm"])}
-                                serie = pd.concat([serie, pd.DataFrame([extra])], ignore_index=True)
-                    n_gg = _giorni_pieni(serie)
-                    fonte = (
-                        f"MeteoNetwork {s.get('nome')} ({s.get('code')}) a {s.get('distanza_km')} km"
-                        + (f" · oggi {s.get('oggi_mm')} mm" if s.get("oggi_mm") is not None else "")
-                        + (f" · {n_gg} gg archivio" if n_gg else " · lista pubblica")
-                    )
-                    info = _info_stazione(s, fonte)
-                    info["giorni_pluviometro"] = _giorni_lista(serie) if serie is not None else []
-                    if serie is not None and len(serie):
-                        info["pioggia_stazione_30g"] = _mm(serie)
-                        if "vento_max" in serie.columns:
-                            vento = riepilogo_vento(serie)
-                    else:
-                        info["pioggia_stazione_30g"] = 0.0
-                        serie = pd.DataFrame({"date": [], "precip": []})
-                    return serie, info, forecast, soil, vento
-
-
-    # 1b) MeteoNetwork token (codici manuali) se la lista pubblica non basta
-    #    (evita 30 chiamate/giorno che fanno 429 e fanno sparire MN).
-    if mn_token and not (forza_piedimonte or forza_cusano):
-        stazioni = list(stazioni_mn or [])
-        if not stazioni:
-            stazioni = mn_stazioni_da_codici(mn_token, mn_codici)
-        vicine_mn = mn_stazioni_vicine(lat, lon, stazioni, quota=quota, n=3, max_km=max_km_stazione)
-        if vicine_mn:
-            s = vicine_mn[0]
-            df_mn = None
-            if serie_mn and s.get("code") in (serie_mn or {}):
-                df_mn = serie_mn.get(s["code"])
-            if df_mn is None:
-                df_mn = mn_dati_stazione(mn_token, s["code"], days)
-            if not _mn_viva(df_mn):
-                s = None
-                df_mn = None
-            if s is not None:
-                df_punto_staz = None
-            try:
-                df_punto_staz, _, _, _ = get_openmeteo_bundle(s["lat"], s["lon"], days) if s is not None else (None,)
-            except Exception:
-                df_punto_staz = None
-            serie = df_punto_staz if df_punto_staz is not None else storico_om
-            n_pluvio = 0
-            if s is not None and serie is not None and df_mn is not None and len(df_mn):
-                serie = serie.copy()
-                n_pluvio = int(df_mn["precip"].notna().sum()) if "precip" in df_mn.columns else len(df_mn)
-                for _, row in df_mn.iterrows():
-                    if pd.isna(row.get("date")):
-                        continue
-                    mask = pd.to_datetime(serie["date"]).dt.normalize() == pd.to_datetime(row["date"]).normalize()
-                    if mask.any() and not pd.isna(row.get("precip")):
-                        serie.loc[mask, "precip"] = row["precip"]
-            if s is not None and serie is not None:
-                oggi_mm = None
-                if df_mn is not None and len(df_mn) and "precip" in df_mn.columns:
-                    oggi_mm = df_mn.iloc[-1]["precip"]
-                fonte = (
-                    f"MeteoNetwork {s.get('nome')} a {s.get('distanza_km')} km"
-                    + (f" · oggi pluviometro {oggi_mm} mm" if oggi_mm is not None else "")
-                    + (f" · {n_pluvio} gg da pluviometro" if n_pluvio else " · 30g modello sul punto stazione")
-                )
-                info = _info_stazione(s, fonte)
-                giorni_txt = []
-                if df_mn is not None and len(df_mn) and "precip" in df_mn.columns:
-                    tmp = df_mn.dropna(subset=["date"]).sort_values("date")
-                    for _, rr in tmp.iterrows():
-                        giorni_txt.append(f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm")
-                info["giorni_pluviometro"] = giorni_txt
-                info["pioggia_modello_30g"] = (
-                    round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
-                )
-                info["pioggia_stazione_30g"] = _mm(serie)
-                return serie, info, forecast, soil, vento
-
-    # 1b) MeteoNetwork interpolato 2.5 km (mappe realtime) se WC è oltre 5 km
-    if mn_token and storico_om is not None:
-        inter = mn_interpolato(mn_token, lat, lon)
-        if inter:
-            serie = storico_om.copy()
-            rain = inter.get("daily_rain") or inter.get("rain")
-            try:
-                if rain not in (None, ""):
-                    oggi_d = pd.Timestamp(datetime.now().date())
-                    serie["date"] = pd.to_datetime(serie["date"]).dt.normalize()
-                    mask = serie["date"] == oggi_d
-                    if mask.any():
-                        serie.loc[mask, "precip"] = float(rain)
-            except Exception:
-                pass
-            fonte_mn = "MeteoNetwork interpolato 2,5 km (mappe realtime)"
-            if rain not in (None, ""):
-                fonte_mn += f" · oggi {rain} mm"
+                    giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
             info = {
-                "fonte": fonte_mn,
-                "stazione": "griglia MN sul bosco",
+                "fonte": f"Mappa giornaliera MeteoNetwork · {zona}" + (f" · download {30-int(mappa.get('falliti') or 0)}/30" if mappa.get("falliti") is not None else ""),
+                "stazione": f"mappa {zona}",
                 "distanza_km": 0,
                 "quota_stazione": None,
-                "pioggia_modello_30g": _mm(storico_om),
-                "pioggia_stazione_30g": _mm(serie),
-                "giorni_pluviometro": [f"{datetime.now().date()}: {rain} mm"] if rain not in (None, "") else [],
+                "pioggia_stazione_30g": round(mm_m, 1),
+                "giorni_pluviometro": giorni,
+                "stima_mappa": True,
             }
-            return serie, info, forecast, soil, vento
+            return mdf.copy(), info, None, None, riepilogo_vento(None)
+        return None, {"fonte": "Mappa MN non disponibile", "giorni_pluviometro": []}, None, None, riepilogo_vento(None)
 
-    # 2) ufficiale SOLO se è vicina al bosco (altrimenti i mm non c'entrano)
-    limite_ufficiale = min(18, max_km_stazione)
-    for s in stazioni_ufficiali_vicine(lat, lon, quota=quota, n=4, max_km=limite_ufficiale):
-        dq = None
-        if quota is not None and s.get("quota") is not None:
-            dq = abs(quota - s["quota"])
-        if dq is not None and dq > 400:
-            continue
-        df_st = get_stazione_dati(s["id"], days)
-        if df_st is not None and df_st["precip"].notna().sum() >= 8:
-            info = _info_stazione(s, "Stazione ufficiale vicina")
-            info["pioggia_modello_30g"] = (
-                round(float(storico_om["precip"].sum(skipna=True)), 1) if storico_om is not None else None
-            )
-            info["pioggia_stazione_30g"] = _mm(df_st)
-            return df_st, info, forecast, soil, vento
+    candidati = []  # list of dict: score, df, info
 
-    # Zona scoperta: mm dalle mappe giornaliere MN (campo interpolato sul bosco)
-    mappa = mn_pioggia_mappa(lat, lon, 15)
-    if mappa and mappa.get("df") is not None and len(mappa["df"]):
-        df_fb = mappa["df"]
-        oggi_m = mappa.get("oggi_mm")
-        mese_m = mappa.get("mese_mm")
-        fonte = (
-            "Stazione assente · Mappe giornaliere MN sul bosco"
-            + " · Non al 100% come una stazione"
-            + (f" · oggi MN {oggi_m} mm" if oggi_m is not None else "")
-            + (f" · 30g MN {mese_m} mm" if mese_m is not None else "")
-        )
-        info = {
+    def _info_base(fonte, stazione, dist, q_st, df):
+        mm = None
+        giorni = []
+        if df is not None and len(df) and "precip" in df.columns:
+            p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+            mm = round(float(p.sum()), 1)
+            tmp = df.copy()
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            tmp = tmp[tmp["_p"] >= 0.2].sort_values("date")
+            for _, row in tmp.iterrows():
+                try:
+                    d = str(row.get("date"))[:10]
+                    giorni.append(f"{d}: {float(row['_p']):.1f} mm")
+                except Exception:
+                    pass
+            # se non ci sono giorni umidi ma totale > 0, segnala
+            if not giorni and mm and mm >= 0.2:
+                giorni.append(f"totale 30g: {mm} mm")
+        return {
             "fonte": fonte,
-            "stazione": "mappa MN",
-            "distanza_km": 0,
-            "stima_mappa": True,
-            "giorni_pluviometro": _giorni_lista(df_fb),
-            "pioggia_stazione_30g": mese_m,
+            "stazione": stazione or "n/d",
+            "distanza_km": round(dist, 2) if dist is not None else None,
+            "quota_stazione": q_st,
+            "pioggia_stazione_30g": mm,
+            "giorni_pluviometro": giorni[-20:],
+            "stima_mappa": False,
         }
-        return df_fb, info, forecast, soil, vento
 
-    if storico_om is not None and len(storico_om):
-        info["fonte"] = "Nessuna stazione né mappa MN · serie modello (ultima spiaggia)"
-        info["stazione"] = "modello"
-        info["stima_mappa"] = True
-        info["giorni_pluviometro"] = _giorni_lista(storico_om)
-        info["pioggia_stazione_30g"] = _mm(storico_om)
-        return storico_om, info, forecast, soil, vento
+    def _score_df(df, dist_km, allinea_fm=None):
+        """Bilancio: vicinanza + dati usabili + allineamento a FunghiMagazine.
 
-    info["fonte"] = "Nessuna stazione MeteoNetwork/WeatherCloud nel raggio"
-    return None, info, forecast, soil, vento
+        - morta / assente → scartata (-1)
+        - più vicina ha vantaggio, ma una stazione un po' più lontana
+          e molto più affidabile (o allineata a FM) può vincere
+        """
+        if df is None or len(df) < 5 or "precip" not in df.columns:
+            return -1
+        df = _sanifica_precip_df(df)
+        if _pluvio_morto(df):
+            return -1
+        if _serie_inaffidabile(df):
+            return -1
+        p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+        umidi = int((p >= 0.4).sum())
+        tot = float(p.sum())
+        d = float(dist_km) if dist_km is not None else 5.0
+        # distanza importante ma non assoluta (0 km → 14, 2 km → 10, 5 km → 4)
+        score_dist = max(0.0, 14.0 - d * 2.0)
+        # qualità serie
+        score_q = umidi * 1.8 + min(tot, 100) * 0.1
+        # allineamento a riferimento FM (se disponibile)
+        score_fm = 0.0
+        if allinea_fm is not None:
+            try:
+                ref = float(allinea_fm)
+                if ref >= 0 and tot >= 0:
+                    # quanto i mm della stazione somigliano a FM (0–10)
+                    diff = abs(tot - ref)
+                    if diff <= 8:
+                        score_fm = 10.0
+                    elif diff <= 18:
+                        score_fm = 6.0
+                    elif diff <= 35:
+                        score_fm = 3.0
+                    else:
+                        score_fm = 0.0
+            except Exception:
+                score_fm = 0.0
+        return score_dist + score_q + score_fm
+
+    # ---- 1) Caput Frigoris (tutte le regioni dove c'è stazione in CF_STAZIONI) ----
+    try:
+        cf = cf_stazione_vicina(lat, lon, max_km=max_km)
+        if cf:
+            scheda = cf_scheda(cf["id"]) or {}
+            mese_mm = scheda.get("mese_mm")
+            # registra OGGI come differenza sul totale mensile (storico vero da oggi in poi)
+            try:
+                store = _cf_registra_giorno_reale(cf["id"], scheda) or {}
+            except Exception:
+                try:
+                    store = _carica_giorni_file() or {}
+                except Exception:
+                    store = {}
+            recs = []
+            oggi = datetime.now().date()
+            n_reali = 0
+            for i in range(days):
+                d = oggi - timedelta(days=i)
+                key = f"cf:{cf['id']}|{d.isoformat()}"
+                old = store.get(key) or {}
+                if isinstance(old, dict) and old.get("precip") is not None:
+                    recs.append({
+                        "date": pd.Timestamp(d),
+                        "precip": float(old.get("precip") or 0),
+                        "t_max": old.get("t_max"),
+                        "t_min": old.get("t_min"),
+                        "t_mean": old.get("t_med") or old.get("t_mean"),
+                        "vento_max": old.get("vento_max"),
+                    })
+                    if old.get("fonte") == "cf_diff_mensile":
+                        n_reali += 1
+            # giorni passati senza registrazione: riempi una sola volta distribuendo il mensile
+            if len(recs) < max(8, days // 2) and mese_mm is not None and float(mese_mm) >= 0:
+                df_dist = _cf_distribuisci_mese(
+                    mese_mm, scheda.get("oggi_mm"), days, lat, lon, scheda,
+                )
+                if df_dist is not None and len(df_dist):
+                    have = {pd.Timestamp(r["date"]).date() for r in recs}
+                    for _, row in df_dist.iterrows():
+                        dd = pd.Timestamp(row["date"]).date()
+                        if dd in have:
+                            continue
+                        # non sovrascrivere oggi se già registrato reale
+                        if dd == oggi and n_reali:
+                            continue
+                        recs.append({
+                            "date": pd.Timestamp(dd),
+                            "precip": float(row.get("precip") or 0),
+                            "t_max": scheda.get("t_max"),
+                            "t_min": scheda.get("t_min"),
+                            "t_mean": scheda.get("t_med"),
+                        })
+            if recs:
+                df_cf = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+                sc = _score_df(df_cf, cf["distanza_km"])
+                if sc < 0 and mese_mm is not None and float(mese_mm) >= 8:
+                    sc = 8.0 + min(float(mese_mm), 100) * 0.1
+                if sc >= 0:
+                    fonte_cf = f"Caput Frigoris · {cf.get('nome')}"
+                    if n_reali >= 1:
+                        fonte_cf += " (giornaliero da differenza mensile)"
+                    else:
+                        fonte_cf += " (mm mensili distribuiti; da oggi registrazione reale)"
+                    candidati.append({
+                        "score": sc,
+                        "df": df_cf,
+                        "info": _info_base(
+                            fonte_cf,
+                            cf.get("nome"),
+                            cf.get("distanza_km"),
+                            None,
+                            df_cf,
+                        ),
+                    })
+    except Exception:
+        pass
+
+    # ---- 2) MeteoNetwork da archivio locale (tutte le regioni nel catalogo) ----
+    try:
+        if stazioni_mn is None:
+            try:
+                stazioni_mn = mn_catalogo_pubblico() or []
+            except Exception:
+                stazioni_mn = []
+            try:
+                path = Path(__file__).resolve().parent / "mn_centro.json"
+                if path.exists():
+                    cat = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(cat, dict):
+                        cat = cat.get("stations") or cat.get("data") or list(cat.values())
+                    if isinstance(cat, list) and cat:
+                        stazioni_mn = cat
+            except Exception:
+                pass
+        vicine = mn_stazioni_vicine(lat, lon, stazioni_mn or [], quota=quota_f, n=8, max_km=max_km)
+        store = {}
+        try:
+            store = _carica_giorni_file() or {}
+        except Exception:
+            store = {}
+        oggi = datetime.now().date()
+        for stz in vicine:
+            code = str(stz.get("code") or stz.get("id") or "")
+            if not code:
+                continue
+            recs = []
+            for i in range(days):
+                d = oggi - timedelta(days=i)
+                old = store.get(f"{code}|{d.isoformat()}") or {}
+                if not old:
+                    continue
+                recs.append({
+                    "date": pd.Timestamp(d),
+                    "precip": float(old.get("precip") or 0),
+                    "t_max": old.get("t_max"),
+                    "t_min": old.get("t_min"),
+                    "t_mean": old.get("t_med") or old.get("t_mean"),
+                    "vento_max": old.get("vento_max"),
+                })
+            if len(recs) < 8:
+                continue
+            df_mn = pd.DataFrame(recs).drop_duplicates("date").sort_values("date")
+            sc = _score_df(df_mn, stz.get("distanza_km"))
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc,
+                "df": df_mn,
+                "info": _info_base(
+                    f"MeteoNetwork · {stz.get('nome') or code}",
+                    stz.get("nome") or code,
+                    stz.get("distanza_km"),
+                    stz.get("quota") or stz.get("altitude"),
+                    df_mn,
+                ),
+            })
+    except Exception:
+        pass
+
+    # ---- 3) WeatherCloud (catalogo centro-sud, tutte le zone coperte) ----
+    if usa_wc:
+        try:
+            cat_wc = wc_catalogo() or []
+            ranked = []
+            for s in cat_wc:
+                try:
+                    d = distanza_km(lat, lon, float(s["lat"]), float(s["lon"]))
+                except Exception:
+                    continue
+                if d > max_km:
+                    continue
+                ranked.append((d, s))
+            ranked.sort(key=lambda x: x[0])
+            for d, s in ranked[:6]:
+                did = s.get("id") or s.get("code")
+                if not did:
+                    continue
+                try:
+                    df_wc = wc_mese_pioggia(did)
+                except Exception:
+                    df_wc = None
+                if df_wc is None or len(df_wc) < 5:
+                    try:
+                        df_wc = wc_mese_mm(did)
+                    except Exception:
+                        df_wc = None
+                if df_wc is None or len(df_wc) < 5:
+                    continue
+                sc = _score_df(df_wc, d)
+                if sc < 0:
+                    continue
+                candidati.append({
+                    "score": sc,
+                    "df": df_wc,
+                    "info": _info_base(
+                        f"WeatherCloud · {s.get('nome') or did}",
+                        s.get("nome") or str(did),
+                        d,
+                        None,
+                        df_wc,
+                    ),
+                })
+        except Exception:
+            pass
+
+    # ---- 4) Wunderground (tabella dashboard PWS, come wundermap / FM) ----
+    try:
+        wu_near = wu_stazioni_vicine(lat, lon, max_km=max_km, limit=12)
+        for s in wu_near:
+            try:
+                df_wu = wu_serie_giornaliera(s["id"], days=days)
+            except Exception:
+                df_wu = None
+            if df_wu is None or len(df_wu) < 5:
+                continue
+            sc = _score_df(df_wu, s.get("distanza_km"))
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc + 5.0,  # bonus WU (fonte principale FunghiMagazine)
+                "df": df_wu,
+                "info": _info_base(
+                    f"Wunderground · {s.get('nome')} ({s.get('id')})",
+                    f"{s.get('nome')} [{s.get('id')}]",
+                    s.get("distanza_km"),
+                    None,
+                    df_wu,
+                ),
+            })
+    except Exception:
+        pass
+
+    # ---- 4b) PDF Semaforo FunghiMagazine (stazioni WU processate da FM) ----
+    try:
+        reg = (regione or "").strip()
+        nome_z = (nome_zona or "").lower()
+        candidati_slug = []
+        for rname, slugs in (FM_LOCALITA or {}).items():
+            if reg and rname.lower() not in reg.lower() and reg.lower() not in rname.lower():
+                # se regione non combacia, valuta comunque match per nome
+                pass
+            for slug in slugs:
+                if slug in nome_z or any(p in nome_z for p in slug.split() if len(p) > 4):
+                    candidati_slug.append(slug)
+        # match generici utili
+        for token, slug in [
+            ("capracotta", "capracotta"), ("pescasseroli", "pescasseroli"),
+            ("roccaraso", "roccaraso"), ("agnone", "agnone"),
+            ("sangro", "castel-di-sangro"), ("matese", "piedimonte-matese"),
+            ("ovindoli", "ovindoli"), ("scanno", "scanno"),
+            ("campo imperatore", "campo-imperatore"), ("assergi", "assergi"),
+            ("pietracamela", "pietracamela"), ("prati di tivo", "prati-di-tivo"),
+            ("passolanciano", "passolanciano"), ("maielletta", "maielletta"),
+            ("blockhaus", "blockhaus"), ("guado", "guado-di-coccia"),
+            ("coccia", "guado-di-coccia"), ("pizzoferrato", "pizzoferrato"),
+            ("gamberale", "gamberale"), ("palena", "palena"),
+            ("parco", "pescasseroli"), ("gran sasso", "campo-imperatore"),
+            ("majella", "maielletta"), ("sirente", "ovindoli"),
+        ]:
+            if token in nome_z:
+                candidati_slug.append(slug)
+        seen = set()
+        for slug in candidati_slug:
+            if slug in seen:
+                continue
+            seen.add(slug)
+            df_fm = None
+            for quale in ("corrente", "precedente"):
+                try:
+                    df_fm = fm_pdf_mese(slug, quale=quale)
+                except Exception:
+                    df_fm = None
+                if df_fm is not None and len(df_fm) >= 5:
+                    break
+            if df_fm is None or len(df_fm) < 5:
+                continue
+            sc = _score_df(df_fm, 2.0)
+            if sc < 0:
+                continue
+            candidati.append({
+                "score": sc,  # FM senza bonus distanza
+                "df": df_fm,
+                "info": _info_base(
+                    f"FunghiMagazine/WU · {slug}",
+                    slug,
+                    0.0,
+                    None,
+                    df_fm,
+                ),
+            })
+    except Exception:
+        pass
+
+    # ---- scegli la migliore stazione ----
+    candidati = [c for c in candidati if c.get("score", -1) >= 0 and c.get("df") is not None]
+    # scarta serie inaffidabili (es. WC con 120 mm/giorno)
+    candidati = [
+        c for c in candidati
+        if not _serie_inaffidabile(c.get("df"), str((c.get("info") or {}).get("fonte") or ""))
+    ]
+
+    def _dist(c):
+        try:
+            return float((c.get("info") or {}).get("distanza_km") or 99)
+        except Exception:
+            return 99.0
+
+    def _mm30(c):
+        try:
+            df0 = c.get("df")
+            if df0 is None or "precip" not in df0.columns:
+                return None
+            return float(pd.to_numeric(df0["precip"], errors="coerce").fillna(0).sum())
+        except Exception:
+            return None
+
+
+    # Affidabilità reti: CF e FM/WU sopra, WeatherCloud sotto
+    for c in candidati:
+        fonte = str((c.get("info") or {}).get("fonte") or "").lower()
+        b = 0.0
+        if "caput frigoris" in fonte or "caput" in fonte:
+            b += 6.0  # preferisci CF se entro 5 km e dati usabili
+        if "funghimagazine" in fonte or fonte.startswith("fm"):
+            b += 5.0
+        if "wunderground" in fonte:
+            b += 3.0
+        if "meteonetwork" in fonte and "mappa" not in fonte:
+            b += 1.0
+        if "weathercloud" in fonte or "weather cloud" in fonte:
+            b -= 8.0  # WC solo se non c'è nulla di meglio
+        c["score"] = float(c.get("score") or 0) + b
+
+    # Riferimento FM: media mm delle candidate FM/WU verificate (se ci sono)
+    ref_fm = None
+    mm_fm = []
+    for c in candidati:
+        fonte = str((c.get("info") or {}).get("fonte") or "").lower()
+        if "funghimagazine" in fonte or fonte.startswith("fm"):
+            m = _mm30(c)
+            if m is not None:
+                mm_fm.append(m)
+    if mm_fm:
+        ref_fm = sum(mm_fm) / len(mm_fm)
+
+    # Ricalcola score: distanza + qualità + allineamento FM
+    for c in candidati:
+        try:
+            d = _dist(c)
+            c["score"] = _score_df(c.get("df"), d, allinea_fm=ref_fm)
+        except Exception:
+            pass
+    candidati = [c for c in candidati if c.get("score", -1) >= 0]
+
+    # Scelta bilanciata:
+    # 1) ordina per score (vicinanza + affidabilità + FM)
+    # 2) se la 1ª è più lontana di ≥2.5 km della più vicina e lo score
+    #    non è chiaramente migliore (+5), preferisci la più vicina
+    candidati.sort(key=lambda c: (-float(c.get("score") or 0), _dist(c)))
+    if len(candidati) >= 2:
+        top = candidati[0]
+        vicina = min(candidati, key=_dist)
+        if vicina is not top and _dist(top) >= _dist(vicina) + 2.5:
+            if float(top.get("score") or 0) < float(vicina.get("score") or 0) + 5:
+                candidati = [vicina] + [c for c in candidati if c is not vicina]
+
+    # Riepilogo reti confrontate (WU / WC / MN / CF / FM)
+    confronto_reti = []
+    for c in candidati[:8]:
+        try:
+            inf = c.get("info") or {}
+            confronto_reti.append(
+                f"{inf.get('fonte', '?')}: {inf.get('pioggia_stazione_30g', '?')} mm"
+                + (f" ({inf.get('distanza_km')} km)" if inf.get("distanza_km") is not None else "")
+            )
+        except Exception:
+            pass
+
+    df = None
+    info = None
+    if candidati:
+        # Preferenza finale: Caput Frigoris entro 5 km batte la mappa MN
+        def _is_mappa(c):
+            f = str((c.get("info") or {}).get("fonte") or "").lower()
+            return "mappa" in f or bool((c.get("info") or {}).get("stima_mappa"))
+        def _is_cf(c):
+            f = str((c.get("info") or {}).get("fonte") or "").lower()
+            return "caput" in f
+        non_mappa = [c for c in candidati if not _is_mappa(c)]
+        if non_mappa:
+            # bonus rete DOPO il ricalcolo: CF e FM/WU sopra, WC sotto
+            for c in non_mappa:
+                fonte = str((c.get("info") or {}).get("fonte") or "").lower()
+                b = 0.0
+                if "caput" in fonte:
+                    b += 6.0
+                if "funghimagazine" in fonte or fonte.startswith("fm"):
+                    b += 5.0
+                if "wunderground" in fonte:
+                    b += 3.0
+                if "meteonetwork" in fonte and "mappa" not in fonte:
+                    b += 1.0
+                if "weathercloud" in fonte or "weather cloud" in fonte:
+                    b -= 8.0
+                c["score"] = float(c.get("score") or 0) + b
+            # vince la più affidabile (score = vicinanza + qualità + allineamento FM + rete)
+            # se la prima è ≥2.5 km più lontana e non è chiaramente meglio, tieni la vicina
+            non_mappa.sort(key=lambda c: (-float(c.get("score") or 0), _dist(c)))
+            top = non_mappa[0]
+            vicina = min(non_mappa, key=_dist)
+            if vicina is not top and _dist(top) >= _dist(vicina) + 2.5:
+                if float(top.get("score") or 0) < float(vicina.get("score") or 0) + 5:
+                    non_mappa = [vicina] + [c for c in non_mappa if c is not vicina]
+            candidati = non_mappa + [c for c in candidati if c not in non_mappa]
+        best = candidati[0]
+
+        df = best["df"]
+        info = best["info"]
+        if info is not None and confronto_reti:
+            info["confronto_reti"] = confronto_reti
+        # stazione trovata: si tiene. La mappa non la sostituisce.
+
+    # ---- 5) Nessuna stazione entro 5 km: SOLO mappa regionale MN ----
+    if df is None or _pluvio_morto(df):
+        try:
+            zona, *_ = _mn_zona(lat, lon)
+            mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+            mdf = mappa.get("df")
+            mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
+            if mdf is not None and len(mdf) >= 1:
+                df = mdf.copy()
+                giorni = []
+                tmp = df.copy()
+                tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+                for _, row in tmp[tmp["_p"] >= 0.4].sort_values("date").iterrows():
+                    giorni.append(f"{str(row.get('date'))[:10]}: {float(row['_p']):.1f} mm")
+                if not giorni:
+                    if int(mappa.get("falliti") or 0) >= 15:
+                        giorni = [f"mappe MN non scaricate ({mappa.get('falliti')}/30) · {_MN_ERR.get('ultimo') or 'errore'}"]
+                    else:
+                        giorni = [f"mappa MN {zona}: {round(mm_m,1)} mm in 30 giorni"]
+                info = {
+                    "fonte": f"Mappa giornaliera MeteoNetwork · {zona}" + (f" · download {30-int(mappa.get('falliti') or 0)}/30" if mappa.get("falliti") is not None else ""),
+                    "stazione": f"mappa {zona}",
+                    "distanza_km": 0,
+                    "quota_stazione": None,
+                    "pioggia_stazione_30g": round(mm_m, 1),
+                    "giorni_pluviometro": giorni,
+                    "stima_mappa": True,
+                }
+        except Exception:
+            pass
+        # mappe MN assenti o a 0: Open-Meteo (ICON) come alternativa
+        mm_ora = 0.0
+        try:
+            if df is not None and "precip" in df.columns:
+                mm_ora = float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum())
+        except Exception:
+            mm_ora = 0.0
+        if df is None or mm_ora < 1:
+            try:
+                om, _fc, _so, _vo = get_openmeteo_bundle(lat, lon, days)
+                if om is not None and len(om) >= 8:
+                    p = pd.to_numeric(om["precip"], errors="coerce").fillna(0)
+                    if float(p.sum()) >= 1:
+                        df = om.copy()
+                        giorni = []
+                        for _, row in df.iterrows():
+                            try:
+                                if float(row.get("precip") or 0) >= 0.4:
+                                    giorni.append(f"{str(row.get('date'))[:10]}: {float(row['precip']):.1f} mm")
+                            except Exception:
+                                pass
+                        info = {
+                            "fonte": "Open-Meteo (zone senza stazione)",
+                            "stazione": "modello ICON",
+                            "distanza_km": 0,
+                            "quota_stazione": None,
+                            "pioggia_stazione_30g": round(float(p.sum()), 1),
+                            "giorni_pluviometro": giorni[-20:],
+                            "stima_mappa": True,
+                        }
+                        if isinstance(_so, dict):
+                            soil = _so
+            except Exception:
+                pass
+        if df is None:
+            try:
+                dpc = dpc_serie_giorni(lat, lon, giorni=min(days, 20))
+                if dpc is not None and len(dpc) >= 8 and not _pluvio_morto(dpc):
+                    df = dpc.copy()
+                    p = pd.to_numeric(df["precip"], errors="coerce").fillna(0)
+                    giorni = []
+                    for _, row in df.iterrows():
+                        try:
+                            if float(row.get("precip") or 0) >= 0.2:
+                                giorni.append(f"{str(row.get('date'))[:10]}: {float(row['precip']):.1f} mm")
+                        except Exception:
+                            pass
+                    info = {
+                        "fonte": "Radar DPC (cumulata pluviometri)",
+                        "stazione": "cella radar DPC",
+                        "distanza_km": 0,
+                        "quota_stazione": None,
+                        "pioggia_stazione_30g": round(float(p.sum()), 1),
+                        "giorni_pluviometro": giorni[-20:],
+                        "stima_mappa": True,
+                    }
+            except Exception:
+                pass
+
+    if info is not None and confronto_reti and not info.get("confronto_reti"):
+        info["confronto_reti"] = confronto_reti
+    if info is None:
+        info = {
+            "fonte": "nessuna stazione ≤5 km né mappa MN",
+            "stazione": "n/d",
+            "distanza_km": None,
+            "quota_stazione": None,
+            "pioggia_stazione_30g": None,
+            "giorni_pluviometro": [],
+            "stima_mappa": False,
+        }
+
+    if df is not None and len(df) and "precip" in df.columns:
+        df = _sanifica_precip_df(df)
+        try:
+            tot = round(float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum()), 1)
+            if info is not None:
+                info["pioggia_stazione_30g"] = tot
+                gg = []
+                tmp = df.copy()
+                tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+                for _, row in tmp[tmp["_p"] >= 0.2].sort_values("date").iterrows():
+                    mm = float(row["_p"])
+                    if mm > 150:
+                        continue
+                    gg.append(f"{str(row.get('date'))[:10]}: {mm:.1f} mm")
+                if gg:
+                    info["giorni_pluviometro"] = gg
+                elif not info.get("giorni_pluviometro"):
+                    info["giorni_pluviometro"] = [f"mappa: {tot} mm in 30 giorni"]
+        except Exception:
+            pass
+        vento = riepilogo_vento(df)
+    if not isinstance(soil, dict) or not soil.get("t_suolo"):
+        try:
+            _st, _fc, _so, _vo = get_openmeteo_bundle(lat, lon, 16)
+            if isinstance(_so, dict) and _so.get("t_suolo"):
+                soil = _so
+            if forecast is None:
+                forecast = _fc
+        except Exception:
+            pass
+    return df, info, forecast, soil, vento
+
+
+
+
+# Fasce FunghiMagazine per specie (massima, minima).
+# aereus caldo, estatino mite-caldo, edulis fresco, pinicola il più fresco.
+FASCE_SPECIE = {
+    "aereus":   ((18, 26), (12, 18)),
+    "estatino": ((16, 24), (10, 16)),
+    "edulis":   ((12, 20), (6, 13)),
+    "pinicola": ((10, 18), (4, 11)),
+}
+NOME_SPECIE = {
+    "aereus": "nero",
+    "estatino": "estatino",
+    "edulis": "edulis",
+    "pinicola": "pinicola",
+}
+
+
+def _specie_del_bosco(tipo_bosco):
+    base = {
+        "faggio": ["estatino", "edulis", "pinicola"],
+        "castagno": ["estatino", "edulis", "pinicola", "aereus"],
+        "quercia": ["estatino", "aereus", "edulis"],
+        "leccio": ["aereus", "estatino", "edulis"],
+        "misto_carpino_quercia": ["estatino", "aereus", "edulis"],
+        "abete_bianco": ["pinicola", "edulis", "estatino"],
+        "abete_rosso": ["pinicola", "edulis"],
+    }
+    return base.get((tipo_bosco or "").lower(), ["estatino", "edulis"])
+
+
+def _temp_per_specie(t_max, t_min, tipo_bosco):
+    """Punteggio e nota in base al porcino che quel bosco può fare."""
+    migliori = []
+    for sp in _specie_del_bosco(tipo_bosco):
+        (mx0, mx1), (mn0, mn1) = FASCE_SPECIE[sp]
+        punti = 0
+        if mx0 <= t_max <= mx1:
+            punti += 25
+        elif mx0 - 3 <= t_max <= mx1 + 3:
+            punti += 14
+        else:
+            punti += 4
+        if mn0 <= t_min <= mn1:
+            punti += 15
+        elif mn0 - 3 <= t_min <= mn1 + 3:
+            punti += 9
+        else:
+            punti += 2
+        migliori.append((punti, sp))
+    migliori.sort(reverse=True)
+    best = migliori[0][1]
+    ok = [NOME_SPECIE[sp] for pt, sp in migliori if pt >= 30]
+    if ok:
+        nota = "Temperature adatte a: " + ", ".join(ok)
+    else:
+        nota = f"Temperature più vicine al {NOME_SPECIE[best]}"
+    return migliori[0][0], nota, best
 
 
 def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
@@ -3808,54 +4368,79 @@ def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
 
 
 def _soglia_spugnata(t_max_media=20.0, siccita=False):
-    """Più caldo e più siccità prima, più mm servono. Base ~40 mm."""
+    """Più caldo e più siccità prima, più mm servono. Base ~40 mm.
+    Il caldo alza un po' la soglia, ma non oltre ~48 (prima arrivava a 58 e
+    escludeva spugnete reali da 50-55 mm)."""
     t = float(t_max_media or 20)
     soglia = 40.0
     if t >= 28:
-        soglia = 58.0
+        soglia = 48.0
     elif t >= 25:
-        soglia = 50.0
+        soglia = 45.0
     elif t >= 22:
-        soglia = 44.0
+        soglia = 42.0
     elif t <= 16:
         soglia = 34.0
     if siccita:
-        soglia += 10.0
-    return soglia
+        soglia += 6.0
+    return min(52.0, soglia)
 
 
 def _mm_efficaci(mm):
-    """Pioggia moderata penetra; i diluvi scivolano."""
+    """Pioggia moderata penetra bene; i diluvi parzialmente.
+    Distribuita (più giorni) viene valorizzata a monte con bonus sulla soglia."""
     mm = float(mm or 0)
     if mm <= 0:
         return 0.0
-    if 3 <= mm <= 18:
+    if 2 <= mm <= 25:
         return mm
-    if mm > 18:
-        return 18.0 + (mm - 18.0) * 0.45
-    return mm * 0.8
+    if mm > 25:
+        # es. 56 mm → 25 + 31*0.55 ≈ 42 mm efficaci (prima era ~35)
+        return 25.0 + (mm - 25.0) * 0.55
+    return mm * 0.85
 
 
 def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
-    """Faggio ~14 gg, castagno ~12, quercia ~10. Il caldo accorcia un filo."""
+    """Giorni tra la *spugnata* e le *prime nascite* (inizio buttata).
+
+    La buttata non parte il giorno della pioggia: parte quando escono i primi
+    funghi, dopo un'attesa che dipende dal bosco:
+      - castagno / quercia / leccio / misto ≈ 8–10 gg (uso 9)
+      - faggio / abeti ≈ 12–14 gg (uso 13)
+    Il caldo accorcia di 1–2 giorni; il freddo allunga.
+    """
     t = tipo_bosco or "faggio"
     if t in ("faggio", "abete_bianco", "abete_rosso"):
-        g = 14
+        g = 13
     elif t == "castagno":
-        g = 12
+        g = 9
     else:
-        g = 10
+        # quercia, leccio, misto_carpino_quercia, …
+        g = 9
     tm = float(t_max_media or 20)
-    if tm >= 26:
-        g = max(8, g - 2)
+    # caldo: -1 giorno al massimo, restiamo nella fascia 8–10 / 12–14
+    if tm >= 28:
+        g = max(8, g - 1)
+    elif tm >= 25:
+        g = max(8, g - 1)
     elif tm <= 16:
         g += 2
     return g
 
 
 def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco="faggio", quota=1000, soil=None):
-    """Spugnata ~40 mm (più se caldo/siccità), meglio distribuita.
-    Nascite dopo 14/12/10 gg. Durata media 2 settimane, non un mese."""
+    """Trova le buttate a partire dalle spugnate.
+
+    Flusso:
+      1) spugnata (~40 mm, meglio se distribuita su 2–4 giorni)
+      2) attesa giorni_attesa (castagno/quercia ~9, faggio ~13) → *prime nascite*
+      3) buttata = periodo di fruttificazione ~14 giorni (un po' di più se tanta
+         acqua e umidità, un po' di meno se caldo/vento secco)
+      4) nuova pioggia durante la buttata può *incrociare* una seconda onda
+
+    I giorni di attesa partono dalla *prima* pioggia importante (inizio spugnata);
+    la buttata (nascite) inizia dopo giorni_attesa da quella data.
+    """
     if df is None or len(df) == 0 or "precip" not in df.columns:
         return []
     d = df.copy()
@@ -3924,6 +4509,15 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
         ottimale = (16 <= float(t_max_media or 20) <= 24) and float(fattore_v or 1) >= 0.7
         if terreno_umido:
             soglia *= 0.52 if ottimale else 0.62
+        # Acqua distribuita su più giorni = migliore penetrazione → soglia più bassa
+        if n_gg >= 4:
+            soglia *= 0.78
+        elif n_gg >= 3:
+            soglia *= 0.85
+        elif n_gg >= 2:
+            soglia *= 0.92
+        # Accetta se: efficaci >= soglia, oppure totale grezzo del cluster >= soglia,
+        # oppure (totale mese già buono e cluster >= 38 mm grezzi)
         if mm_eff < soglia and mm < soglia:
             continue
         # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
@@ -3938,21 +4532,38 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             durata += 1
         if quota and quota >= 1200:
             durata += 1
-        if t_max_media >= 27:
-            durata = round(durata * 0.72)
+        # caldo accorcia un filo, ma non dimezza (media resta ~12–14 gg)
+        if t_max_media >= 29:
+            durata = round(durata * 0.82)
+        elif t_max_media >= 26:
+            durata = round(durata * 0.90)
         elif t_max_media >= 24:
-            durata = round(durata * 0.88)
-        if fattore_v < 0.45:
+            durata = round(durata * 0.95)
+        # vento solo DOPO questa spugnata (prima non conta)
+        try:
+            fv_evt = float(riepilogo_vento(d, giorni=20, dopo_data=data_riferimento).get("fattore_vento") or 1.0)
+        except Exception:
+            fv_evt = float(fattore_v or 1.0)
+        if fv_evt < 0.45:
             durata = round(durata * 0.65)
-        elif fattore_v < 0.7:
+        elif fv_evt < 0.7:
             durata = round(durata * 0.82)
         if soil is not None:
             try:
-                s = float(soil)
-                if s < 0.18:
+                s = soil.get("umidita") if isinstance(soil, dict) else float(soil)
+                if s is not None and s < 0.18:
                     durata = round(durata * 0.75)
-                elif 0.22 <= s <= 0.38:
+                elif s is not None and 0.22 <= s <= 0.38:
                     durata = min(18, durata + 1)
+            except Exception:
+                pass
+            # terreno ancora caldo dall'estate: la buttata parte più tardi
+            try:
+                ts = soil.get("t_suolo") if isinstance(soil, dict) else None
+                if ts is not None and ts >= 18:
+                    attesa = attesa + (3 if ts >= 20 else 2)
+                    inizio = data_riferimento + pd.Timedelta(days=attesa)
+                    fine = inizio + pd.Timedelta(days=durata)
             except Exception:
                 pass
         durata = int(max(8, min(18, durata)))
@@ -3961,19 +4572,23 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             attesa = max(7, attesa - 3)
         elif terreno_umido:
             attesa = max(8, attesa - 1)
-        inizio = pd.Timestamp(data_evt) + pd.Timedelta(days=attesa)
+        # Attesa e buttata si contano dalla *prima* pioggia importante del cluster
+        # (inizio spugnata), non dall'ultimo giorno di pioggia.
+        data_riferimento = pd.Timestamp(data_start if data_start is not None else data_evt)
+        inizio = data_riferimento + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
-        dopo = d[d["date"] >= pd.Timestamp(data_evt)]
+        # Asciutto prolungato *dopo* le nascite può chiudere un po' prima;
+        # NON si usa la data della spugnata (prima tagliava a pioggia+12gg e
+        # risultava "finita" dopo 4–5 giorni di nascite).
+        dopo_nascite = d[d["date"] >= inizio.normalize()]
         ultima_umida = None
-        if len(dopo):
-            umide = dopo[dopo["precip"] >= 4]
+        if len(dopo_nascite):
+            umide = dopo_nascite[pd.to_numeric(dopo_nascite["precip"], errors="coerce").fillna(0) >= 3]
             if len(umide):
                 ultima_umida = pd.to_datetime(umide["date"].max()).normalize()
         if ultima_umida is not None and int((oggi - ultima_umida).days) >= 12:
             fine = min(fine, ultima_umida + pd.Timedelta(days=12))
         attiva = bool(inizio.normalize() <= oggi <= fine.normalize())
-        if ultima_umida is not None and (oggi - ultima_umida).days >= 12:
-            attiva = False
         incrocio = False
         if out:
             p = out[-1]
@@ -3985,7 +4600,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             "pioggia_efficace": round(float(mm_eff), 1),
             "giorni_pioggia": int(n_gg),
             "soglia_mm": round(soglia, 0),
-            "data_pioggia": pd.Timestamp(data_evt).date().isoformat(),
+            "data_pioggia": data_riferimento.date().isoformat(),
             "inizio": inizio.date().isoformat(),
             "fine": fine.date().isoformat(),
             "attiva": attiva,
@@ -4015,8 +4630,10 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "ACQUA DEBOLE",
             "testo": (
-                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma non una spugnata da ~40 mm "
-                "distribuita. Serve altra acqua per far partire una buttata."
+                f"Pioggia in 30g {float(precip_totale):.0f} mm, ma nessuna pioggia cumulata abbastanza "
+                "concentrata (serve un blocco di pioggia ~40 mm in pochi giorni, meglio se "
+                "distribuita su 2–4 giorni). Con questo totale serve ancora un'onda utile "
+                "per far partire la buttata."
             ),
         }
     attive = [b for b in buttate if b.get("attiva")]
@@ -4050,11 +4667,13 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "IN CORSO",
             "testo": (
-                f"Buttata INIZIATA il {b['inizio']} — oggi è il giorno {giorno}. "
-                f"Resta aperta fino al {b['fine']}"
-                + (f" ({restano} giorni)" if restano is not None else "")
-                + f". Innescata da {b['pioggia_mm']} mm il {b['data_pioggia']}. "
-                "Se ripiove abbastanza con temperature ok, può incrociarsi una seconda."
+                f"Buttata in corso: prime nascite dal {b['inizio']} "
+                f"(oggi giorno {giorno} di fruttificazione). "
+                f"Dovrebbe tenere fino al {b['fine']}"
+                + (f" (ancora ~{restano} giorni)" if restano is not None else "")
+                + f", finché il micelio trova umidità. "
+                f"Pioggia cumulata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                "Se ripiove, può incrociarsi una nuova onda."
             ),
         }
     if future:
@@ -4065,8 +4684,10 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         return {
             "fase": "IN ATTESA",
             "testo": (
-                f"La buttata NON è ancora nata. Pioggia buona {b['pioggia_mm']} mm il {b['data_pioggia']}. "
-                f"Attendi ancora {manca} giorni — nascite previste dal {b['inizio']} al {b['fine']}."
+                f"Pioggia cumulata di {b['pioggia_mm']} mm il {b['data_pioggia']}. "
+                f"Le prime nascite (inizio buttata) sono previste tra {manca} giorni "
+                f"(dal {b['inizio']}). Poi la buttata può durare circa due settimane "
+                f"(fino al {b['fine']}), se l'umidità tiene."
             ),
         }
     b = buttate[-1]
@@ -4075,7 +4696,7 @@ def stato_buttata(buttate, precip_totale=0, giorni_attesa=13):
         "testo": (
             f"Buttata FINITA il {b['fine']} (era partita il {b['inizio']} "
             f"dopo {b['pioggia_mm']} mm il {b['data_pioggia']}). "
-            "Serve una nuova spugnata per farne riniziare un'altra."
+            "Serve una nuova pioggia cumulata per farne riniziare un'altra."
         ),
     }
 
@@ -4155,8 +4776,34 @@ def finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast):
     if forecast is not None and len(forecast):
         pioggia_prevista = float(forecast["precip"].sum())
         if pioggia_prevista >= 20:
-            stato += f" · in arrivo ~{pioggia_prevista:.0f} mm (nuova spugnata)"
+            stato += f" · in arrivo ~{pioggia_prevista:.0f} mm (nuova pioggia cumulata)"
     return stato
+
+
+
+def _stima_suolo_da_aria(df):
+    """Terreno ≈ media dell'aria in ritardo: pesa di più gli ultimi 10 giorni,
+    un po' gli ultimi 30. Dopo l'estate resta più caldo dell'aria di oggi."""
+    if df is None or not len(df):
+        return None
+    d = df.copy()
+    d["date"] = pd.to_datetime(d["date"], errors="coerce")
+    tm = None
+    if "t_mean" in d.columns:
+        tm = pd.to_numeric(d["t_mean"], errors="coerce")
+    if tm is None or tm.dropna().empty:
+        if "t_max" in d.columns and "t_min" in d.columns:
+            tm = (pd.to_numeric(d["t_max"], errors="coerce") + pd.to_numeric(d["t_min"], errors="coerce")) / 2
+    if tm is None:
+        return None
+    tm = tm.dropna()
+    if len(tm) < 5:
+        return None
+    recenti = tm.tail(10)
+    lunghi = tm.tail(30)
+    # il suolo è più stabile: 60% ultimi 10 gg, 40% il mese
+    val = 0.6 * float(recenti.mean()) + 0.4 * float(lunghi.mean())
+    return round(val, 1)
 
 
 def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None):
@@ -4185,16 +4832,12 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     pioggia_min = regole["pioggia_min"]
     pioggia_max = regole["pioggia_max"]
 
-    # in quota le temperature ideali sono più basse
+    # Fascia di riferimento: quella della specie che questo bosco può fare.
+    possibili = _specie_del_bosco(tipo_bosco)
     if quota >= 1400:
-        t_max_ok = (18, 24)
-        t_min_ok = (8, 14)
-    elif quota >= 1000:
-        t_max_ok = (20, 26)
-        t_min_ok = (10, 16)
-    else:
-        t_max_ok = (22, 28)
-        t_min_ok = (12, 18)
+        possibili = [s for s in possibili if s in ("pinicola", "edulis")] or possibili
+    sp_ref = possibili[0]
+    (t_max_ok, t_min_ok) = FASCE_SPECIE.get(sp_ref, ((16, 22), (8, 14)))
 
     if t_max_media > 27:
         pioggia_min += 15
@@ -4222,31 +4865,73 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     if 4 <= giorni_con_pioggia <= 12 and precip_totale >= 35:
         score_pioggia = min(70, score_pioggia + 6)
 
-    score_temp = 0
-    if t_max_ok[0] <= t_max_media <= t_max_ok[1]:
-        score_temp += 25
-    elif t_max_ok[0] - 3 <= t_max_media <= t_max_ok[1] + 3:
-        score_temp += 15
-    else:
-        score_temp += 5
+    # Temperature come negli articoli FunghiMagazine:
+    # dopo la pioggia il bosco deve restare mite. Il caldo secco e le minime
+    # basse (sotto i 5 °C, gelo sotto i 2) frenano o fermano le nascite.
+    # Lo shock termico (calo dopo la pioggia) è favorevole, non il caldo.
+    score_temp, nota_temp, _sp = _temp_per_specie(t_max_media, t_min_media, tipo_bosco)
 
-    if t_min_ok[0] <= t_min_media <= t_min_ok[1]:
-        score_temp += 15
-    elif t_min_ok[0] - 3 <= t_min_media <= t_min_ok[1] + 3:
-        score_temp += 10
-    else:
-        score_temp += 3
+    # Freddo eccessivo (FM: temperature troppo basse ostacolano le nascite)
+    try:
+        tmin_series = pd.to_numeric(df.get("t_min"), errors="coerce").dropna()
+        if len(tmin_series):
+            n_gelo = int((tmin_series <= 2.0).sum())
+            n_freddo = int((tmin_series < 5.0).sum())
+            tmin_coda = float(pd.to_numeric(coda.get("t_min"), errors="coerce").mean()) if "t_min" in coda.columns else t_min_media
+            if n_gelo >= 2 or (not pd.isna(tmin_coda) and tmin_coda <= 2.0):
+                score_temp = max(0, score_temp - 22)
+                nota_temp = "Temperature troppo basse (rischio gelo): nascite frenate"
+            elif n_freddo >= 5 or (not pd.isna(tmin_coda) and tmin_coda < 5.0):
+                score_temp = max(0, score_temp - 12)
+                nota_temp = "Minime basse (<5°C): buttata rallentata"
+            elif t_min_media < 6.0:
+                score_temp = max(0, score_temp - 6)
+                nota_temp = "Temperature fresche: crescita lenta"
+    except Exception:
+        pass
+    if t_max_media >= 30:
+        score_temp = max(0, score_temp - 10)
+        nota_temp = (nota_temp + " · " if nota_temp else "") + "Troppo caldo: micelio sotto stress"
 
     # attesa: faggio 14, castagno 12, quercia 10 — il caldo accorcia un filo
     specie = specie_porcini(tipo_bosco, quota, t_max_media)
     giorni_attesa = giorni_attesa_bosco(tipo_bosco, t_max_media)
 
-    vento = vento or riepilogo_vento(df if df is not None and "vento_max" in df.columns else None)
-    fattore_v = float(vento.get("fattore_vento") or 1.0)
+    # prima le buttate (serve la data pioggia); il vento che conta è quello DOPO
+    vento0 = vento or riepilogo_vento(df if df is not None and "vento_max" in getattr(df, "columns", []) else None)
+    fattore_v = float(vento0.get("fattore_vento") or 1.0)
     buttate = trova_buttate(
         df, giorni_attesa, t_max_media, fattore_v,
         tipo_bosco=tipo_bosco, quota=quota, soil=soil,
     )
+    # ricalcola vento/fattore solo dal giorno della spugnata più rilevante in poi
+    dopo_pioggia = None
+    if buttate:
+        try:
+            # ultima spugnata (o quella ancora attiva)
+            att = [b for b in buttate if b.get("attiva")]
+            dopo_pioggia = (att[-1] if att else buttate[-1]).get("data_pioggia")
+        except Exception:
+            dopo_pioggia = buttate[-1].get("data_pioggia")
+    vento = riepilogo_vento(
+        df if df is not None and "vento_max" in getattr(df, "columns", []) else None,
+        giorni=20,
+        dopo_data=dopo_pioggia,
+    )
+    # se non c'è serie dopo la pioggia, tieni info generali ma fattore neutro
+    if dopo_pioggia and vento.get("vento_max_10g") is None:
+        vento = dict(vento0)
+        vento["fattore_vento"] = 1.0
+        vento["nota_vento"] = "Vento dopo la pioggia: n/d (non penalizzato)"
+    elif dopo_pioggia:
+        pass
+    else:
+        # nessuna spugnata: il vento pre-pioggia non deve abbassare lo score
+        vento = dict(vento0)
+        vento["fattore_vento"] = 1.0
+        if vento0.get("nota_vento"):
+            vento["nota_vento"] = "Vento prima di una pioggia cumulata: non penalizza la buttata"
+    fattore_v = float(vento.get("fattore_vento") or 1.0)
     attive = [b for b in buttate if b.get("attiva")]
     giorni_dalla_pioggia = 99
     if buttate:
@@ -4265,12 +4950,39 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         score_tempo = 3
 
     score_suolo = 0
-    if soil is not None:
-        # valori volumetrici tipici 0.15–0.40 m3/m3
-        if 0.22 <= soil <= 0.38:
-            score_suolo = 10
-        elif 0.18 <= soil <= 0.42:
-            score_suolo = 5
+    umid = soil.get("umidita") if isinstance(soil, dict) else soil
+    t_suolo = soil.get("t_suolo") if isinstance(soil, dict) else None
+    if t_suolo is None:
+        t_suolo = _stima_suolo_da_aria(df)
+        if t_suolo is not None and isinstance(soil, dict):
+            soil["t_suolo"] = t_suolo
+            soil["t_suolo_fonte"] = "stima aria"
+        elif t_suolo is not None:
+            soil = {"t_suolo": t_suolo, "t_suolo_fonte": "stima aria"}
+    if umid is not None:
+        try:
+            umid = float(umid)
+            if 0.22 <= umid <= 0.38:
+                score_suolo = 10
+            elif 0.18 <= umid <= 0.42:
+                score_suolo = 5
+        except Exception:
+            pass
+    # FunghiMagazine: dopo l'estate il suolo resta caldo più dell'aria.
+    # Se è ancora sopra ~18 °C le nascite slittano, anche con aria già fresca.
+    if t_suolo is not None:
+        try:
+            ts = float(t_suolo)
+            if ts >= 20:
+                score_suolo = max(0, score_suolo - 8)
+                nota_temp = (nota_temp + " · " if nota_temp else "") + f"Terreno ancora caldo ({ts:.0f}°C): nascite in ritardo"
+            elif ts >= 18:
+                score_suolo = max(0, score_suolo - 4)
+                nota_temp = (nota_temp + " · " if nota_temp else "") + f"Terreno tiepido ({ts:.0f}°C): attesa un po' più lunga"
+            elif 10 <= ts <= 16:
+                score_suolo += 4
+        except Exception:
+            pass
 
     # il vento persistente brucia l'effetto della pioggia e del suolo
     umido = (score_pioggia + score_tempo + score_suolo) * fattore_v
@@ -4285,7 +4997,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         if pd.to_datetime(ultime["inizio"]) > pd.Timestamp(datetime.now().date()):
             consiglio = f"Buttata in arrivo dal {ultime['inizio']} (pioggia {ultime['pioggia_mm']} mm il {ultime['data_pioggia']})"
         else:
-            consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova spugnata"
+            consiglio = f"Buttata chiusa il {ultime['fine']} — serve una nuova pioggia cumulata"
     else:
         consiglio = finestra_uscita(giorni_dalla_pioggia, giorni_attesa, forecast)
     attese = [s for s in specie if s["stato"] in ("probabile", "possibile")]
@@ -4294,6 +5006,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         consiglio = f"Specie: {txt_sp} · " + consiglio
     if fattore_v < 0.5:
         consiglio = vento.get("nota_vento", "Vento secco") + " · " + consiglio
+    if nota_temp:
+        consiglio = nota_temp + " · " + consiglio
     sb = stato_buttata(buttate, precip_totale, giorni_attesa)
 
     dettaglio = {
@@ -4305,7 +5019,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "t_med_media": t_med_view if t_med_view is not None else "n/d",
         "giorni_dalla_buona_pioggia": giorni_dalla_pioggia if giorni_dalla_pioggia < 99 else "n/d",
         "giorni_attesa_consigliati": giorni_attesa,
-        "umidita_suolo": soil if soil is not None else "n/d",
+        "umidita_suolo": (soil.get("umidita") if isinstance(soil, dict) else soil) if soil is not None else "n/d",
+        "t_suolo": (soil.get("t_suolo") if isinstance(soil, dict) else None) if soil is not None else "n/d",
         "consiglio": consiglio,
         "vento_medio_10g": vento.get("vento_medio_10g"),
         "vento_max_10g": vento.get("vento_max_10g"),
@@ -4360,10 +5075,17 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         punteggio_totale = min(punteggio_totale, 48)
         dettaglio["consiglio"] = consiglio
     # Poca acqua nel mese: non può essere una buttata "ALTA"
-    if precip_totale < 25:
+    if precip_totale < 25 and not attive:
         punteggio_totale = min(punteggio_totale, 42)
         consiglio = f"Poca pioggia in 30g ({precip_totale:.0f} mm) · " + consiglio
         dettaglio["consiglio"] = consiglio
+
+    # Colore mappa allineato alla fase: buttata aperta = verde
+    fase = (sb.get("fase") or "").upper()
+    if fase in ("IN CORSO", "INCROCIO") or attive:
+        punteggio_totale = max(float(punteggio_totale), 75.0)
+    elif fase == "IN ATTESA":
+        punteggio_totale = max(float(punteggio_totale), 55.0)
 
     if punteggio_totale >= 70:
         livello = "🟢 ALTO - condizioni molto buone"
@@ -4394,7 +5116,7 @@ def invia_email(destinatario, oggetto, corpo, smtp_user, smtp_pass):
         return False, f"Errore invio email: {str(e)}"
 
 
-def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True, solo_mappe=False):
     p = dict(p)
     p["tipo"] = classifica_bosco(
         p.get("nome"), p.get("quota"), p.get("regione"), p.get("lat"), p.get("tipo")
@@ -4404,6 +5126,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         quota=p.get("quota"), max_km_stazione=max_km_stazione,
         mn_codici=mn_codici, stazioni_mn=stazioni_mn, serie_mn=serie_mn,
         usa_wc=usa_wc, nome_zona=p.get("nome") or "", regione=p.get("regione") or "",
+        solo_mappe=solo_mappe,
     )
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
@@ -4413,7 +5136,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
         mm_now = 0.0
         if df is not None and "precip" in df.columns:
             mm_now = float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum())
-        if (not info_meteo.get("stima_mappa")) and (df is None or _pluvio_morto(df) or mm_now < 5):
+        if (not info_meteo.get("stima_mappa")) and (df is None or _pluvio_morto(df)):
             mappa = mn_pioggia_mappa(p["lat"], p["lon"], 15) or {}
             mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
             if mappa and mappa.get("df") is not None and len(mappa["df"]) and mm_m >= 8:
@@ -4445,40 +5168,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
                     vento = riepilogo_vento(df)
     except Exception:
         pass
-    # stazione vs mappa MN sul bosco: se i mm della stazione non ci sono in mappa, uso la mappa
-    try:
-        if df is not None and not info_meteo.get("stima_mappa"):
-            mappa = _mappa_smentisce_stazione(df, p["lat"], p["lon"])
-            if mappa and mappa.get("df") is not None and len(mappa["df"]):
-                mm_st = float(pd.to_numeric(df["precip"], errors="coerce").sum()) if "precip" in df.columns else 0
-                mm_m = float(mappa.get("mese_mm") or 0)
-                keep_t = df.copy()
-                df = mappa["df"].copy()
-                try:
-                    keep_t["date"] = pd.to_datetime(keep_t["date"], errors="coerce")
-                    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                    cols = [c for c in ("t_max", "t_min", "t_mean", "t_med", "vento_max") if c in keep_t.columns]
-                    if cols:
-                        if "vento_max" in df.columns:
-                            df = df.drop(columns=["vento_max"])
-                        df = df.merge(keep_t[["date"] + cols], on="date", how="left")
-                except Exception:
-                    pass
-                info_meteo["fonte"] = (
-                    f"Pluviometro smentito dalle mappe MN ({mm_st:.0f} mm stazione vs {mm_m:.0f} mm sul bosco) · "
-                    "Mappe giornaliere MN"
-                )
-                info_meteo["stima_mappa"] = True
-                info_meteo["pioggia_stazione_30g"] = mm_m
-                info_meteo["giorni_pluviometro"] = [
-                    f"{pd.to_datetime(rr['date']).date()}: {float(rr['precip']):.1f} mm"
-                    for _, rr in mappa["df"].iterrows()
-                    if float(rr.get("precip") or 0) >= 0.2
-                ]
-                if "vento_max" in df.columns:
-                    vento = riepilogo_vento(df)
-    except Exception:
-        pass
+    # zona con stazione: non si tocca, niente confronto con la mappa
     fonte0 = str(info_meteo.get("fonte") or "")
     if (
         fonte0.startswith("MeteoNetwork")
@@ -4541,7 +5231,10 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
                 tenuti.append(g)
                 continue
             data = gs.split(":")[0].strip()[:10]
-            if len(data) >= 10 and data[:10] >= taglio:
+            if len(data) < 10 or not data[:4].isdigit():
+                tenuti.append(g)
+                continue
+            if data[:10] >= taglio:
                 tenuti.append(g)
         info_meteo["giorni_pluviometro"] = tenuti
     if (df is None or len(df) == 0) and (info_meteo.get("giorni_pluviometro") or []):
@@ -4559,6 +5252,25 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     if df is not None and len(df) and "precip" in df.columns:
         try:
             info_meteo["pioggia_stazione_30g"] = round(float(pd.to_numeric(df["precip"], errors="coerce").sum()), 1)
+        except Exception:
+            pass
+        # Sempre: lista giorni CON millimetri (WC/MN/WU/mappe)
+        try:
+            tmp = df.copy()
+            tmp["date"] = pd.to_datetime(tmp["date"], errors="coerce")
+            tmp["_p"] = pd.to_numeric(tmp["precip"], errors="coerce").fillna(0)
+            taglio = pd.Timestamp(datetime.now().date() - timedelta(days=30))
+            tmp = tmp[(tmp["date"].notna()) & (tmp["date"] >= taglio) & (tmp["_p"] >= 0.2)]
+            tmp = tmp.sort_values("date")
+            gg = [
+                f"{row['date'].date()}: {float(row['_p']):.1f} mm" for _, row in tmp.iterrows()
+            ]
+            if gg:
+                info_meteo["giorni_pluviometro"] = gg
+            elif not info_meteo.get("giorni_pluviometro"):
+                info_meteo["giorni_pluviometro"] = [
+                    f"mappa: {info_meteo.get('pioggia_stazione_30g') or 0} mm in 30 giorni"
+                ]
         except Exception:
             pass
     try:
@@ -4585,17 +5297,17 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=35, mn_codici="", stazio
     return {**p, "score": score, "livello": livello, "dettaglio": det, "meteo": info_meteo}
 
 
-def calcola_tutti(punti, regole, mn_token, max_km_stazione=35, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
+def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_codici="", stazioni_mn=None, serie_mn=None, usa_wc=True):
     risultati = []
     tot = max(1, len(punti))
-    barra = st.progress(0, text="Scarico mappe giornaliere MN…")
+    barra = st.progress(0, text=f"Preparazione {tot} zone…")
     try:
         mn_preload_mappe(30)
     except Exception:
         pass
-    barra = st.progress(0, text=f"Calcolo 0/{tot} zone (0%)")
+    barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
     fatti = 0
-    with ThreadPoolExecutor(max_workers=max(1, min(3, max_workers))) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(6, max_workers))) as ex:
         fut = {
             ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn, usa_wc): p
             for p in punti
