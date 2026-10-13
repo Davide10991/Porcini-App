@@ -1295,6 +1295,27 @@ def api_calcola_stato():
     })
 
 
+
+@app.route("/api/segnala", methods=["POST"])
+@login_required
+def api_segnala():
+    data = request.get_json(silent=True) or {}
+    testo = str(data.get("testo") or "").strip()[:2000]
+    pagina = str(data.get("pagina") or "").strip()[:200]
+    if not testo:
+        return jsonify({"ok": False, "errore": "Scrivi cosa non funziona"}), 400
+    email = session.get("email") or "sconosciuto"
+    corpo = f"Segnalazione da {email}\nPagina: {pagina}\n\n{testo}"
+    html = _html_mail("Segnalazione malfunzionamento", [f"Da: {email}", f"Pagina: {pagina}", testo])
+    try:
+        ok = _invia_mail("boletusmap@gmail.com", f"Segnalazione Boletus Map da {email}", corpo, html)
+    except Exception:
+        ok = False
+    if not ok:
+        return jsonify({"ok": False, "errore": "Invio non riuscito"}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/api/ultimo")
 
 @login_required
