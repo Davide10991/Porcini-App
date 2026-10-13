@@ -4375,9 +4375,10 @@ def specie_porcini(tipo_bosco, quota=1000, t_max_media=20.0, mese=None):
 
 
 def _soglia_spugnata(t_max_media=20.0, siccita=False):
-    """Più caldo e più siccità prima, più mm servono. Base ~40 mm.
-    Il caldo alza un po' la soglia, ma non oltre ~48 (prima arrivava a 58 e
-    escludeva spugnete reali da 50-55 mm)."""
+    """Pioggia utile secondo FunghiMagazine.
+    Per far partire una buttata: almeno 30 mm dopo un periodo secco,
+    meglio 40-50. Un goccio da 1-5 mm mantiene umido, non fa partire.
+    Dopo lunga siccità o caldo forte serve di più."""
     t = float(t_max_media or 20)
     soglia = 40.0
     if t >= 28:
@@ -4387,10 +4388,10 @@ def _soglia_spugnata(t_max_media=20.0, siccita=False):
     elif t >= 22:
         soglia = 42.0
     elif t <= 16:
-        soglia = 34.0
+        soglia = 36.0
     if siccita:
-        soglia += 6.0
-    return min(52.0, soglia)
+        soglia += 8.0
+    return min(55.0, max(30.0, soglia))
 
 
 def _mm_efficaci(mm):
@@ -4500,6 +4501,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
     n_gg = 0
     start = None
     last = None
+    prima_vera = None
     giorni_cluster = []
     for _, row in d.iterrows():
         mm = float(row["precip"])
@@ -4507,38 +4509,45 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
         if mm >= 1.5:
             if start is None:
                 start = giorno
+                prima_vera = giorno if mm >= 10 else None
                 acc = mm
                 acc_eff = _mm_efficaci(mm)
                 n_gg = 1
                 giorni_cluster = [mm]
             elif last is not None and (giorno - last).days <= 4:
-                # già una spugnata e 2+ giorni di pausa: nuova onda, non un unico blocco
                 if acc_eff >= 38 and (giorno - last).days >= 2:
-                    eventi.append((last or start, acc, acc_eff, n_gg, start))
+                    rif = prima_vera or start
+                    eventi.append((last or start, acc, acc_eff, n_gg, rif))
                     start = giorno
+                    prima_vera = giorno if mm >= 10 else None
                     acc = mm
                     acc_eff = _mm_efficaci(mm)
                     n_gg = 1
                     giorni_cluster = [mm]
                 else:
+                    if prima_vera is None and mm >= 10:
+                        prima_vera = giorno
                     acc += mm
                     acc_eff += _mm_efficaci(mm)
                     n_gg += 1
                     giorni_cluster.append(mm)
             else:
-                eventi.append((last or start, acc, acc_eff, n_gg, start))
+                rif = prima_vera or start
+                eventi.append((last or start, acc, acc_eff, n_gg, rif))
                 start = giorno
+                prima_vera = giorno if mm >= 10 else None
                 acc = mm
                 acc_eff = _mm_efficaci(mm)
                 n_gg = 1
                 giorni_cluster = [mm]
             last = giorno
         elif start is not None and last is not None and (giorno - last).days > 4:
-            eventi.append((last, acc, acc_eff, n_gg, start))
+            eventi.append((last, acc, acc_eff, n_gg, prima_vera or start))
             start, acc, acc_eff, n_gg, last = None, 0.0, 0.0, 0, None
+            prima_vera = None
             giorni_cluster = []
     if start is not None:
-        eventi.append((last or start, acc, acc_eff, n_gg, start))
+        eventi.append((last or start, acc, acc_eff, n_gg, prima_vera or start))
 
     oggi = pd.Timestamp(datetime.now().date())
     out = []
@@ -4616,7 +4625,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             ts = None
         if ts is not None and ts >= 19:
             soglia *= 1.10
-        soglia = max(32.0, min(55.0, soglia))
+        soglia = max(30.0, min(55.0, soglia))
         if mm < soglia and mm_eff < soglia:
             continue
         # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
