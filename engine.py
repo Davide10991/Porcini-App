@@ -1111,6 +1111,8 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
     key = (d, variabile, zona)
     if key in _MN_PX:
         return _MN_PX[key]
+    if len(_MN_PX) > 12:
+        _MN_PX.clear()
     _MAPPE_DIR.mkdir(exist_ok=True)
     fp = _MAPPE_DIR / f"v3_{d}_{variabile}_{zona}.bin"
     if fp.exists() and fp.stat().st_size > 1000:
@@ -1145,7 +1147,7 @@ def _mn_mappa_px(giorno, variabile="prec", zona="italia"):
                 r = None
                 time.sleep(0.5)
         if r is None or r.status_code != 200 or len(r.content) < 10000:
-            _MN_ERR["ultimo"] = "download fallito"
+            _MN_ERR["ultimo"] = f"download {r.status_code if r is not None else 'rete'}"
             return None
         try:
             from PIL import Image
@@ -1344,25 +1346,12 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         if mm is None:
             falliti += 1
             mm = 0.0
-        tmax = tmin = vento = None
-        try:
-            tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
-        except Exception:
-            tmax = None
-        try:
-            tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
-        except Exception:
-            tmin = None
-        try:
-            vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE, neutro=False))
-        except Exception:
-            vento = None
         rows.append({
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
-            "t_min": tmin,
-            "t_max": tmax,
-            "vento_max": vento,
+            "t_min": None,
+            "t_max": None,
+            "vento_max": None,
         })
     if not rows:
         return None
@@ -4101,6 +4090,16 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
         try:
             zona, *_ = _mn_zona(lat, lon)
             mappa = mn_pioggia_mappa(lat, lon, 15) or {}
+            if not mappa:
+                info = {
+                    "fonte": f"Mappa MN {zona}: lettura fallita",
+                    "stazione": f"mappa {zona}",
+                    "distanza_km": 0,
+                    "quota_stazione": None,
+                    "pioggia_stazione_30g": 0,
+                    "giorni_pluviometro": [f"errore mappa: {_MN_ERR.get('ultimo') or 'download o Pillow'}"],
+                    "stima_mappa": True,
+                }
             mdf = mappa.get("df")
             mm_m = float(mappa.get("mese_mm") or 0) if mappa else 0
             if mdf is not None and len(mdf) >= 1:
@@ -5396,7 +5395,7 @@ def calcola_tutti(punti, regole, mn_token, max_km_stazione=5, max_workers=8, mn_
         pass
     barra = st.progress(0, text=f"Calcolo 0/{tot} zone…")
     fatti = 0
-    with ThreadPoolExecutor(max_workers=max(1, min(6, max_workers))) as ex:
+    with ThreadPoolExecutor(max_workers=2) as ex:
         fut = {
             ex.submit(analizza_punto, p, regole, mn_token, max_km_stazione, mn_codici, stazioni_mn, serie_mn, usa_wc): p
             for p in punti
