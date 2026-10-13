@@ -2152,6 +2152,7 @@ def riepilogo_vento(df, giorni=10, dopo_data=None):
         "picchi_vento": picchi,
         "picco_max_data": picco_data,
         "picco_max_kmh": picco_kmh,
+        "direzione": None,
     }
 
 
@@ -4400,6 +4401,46 @@ def _mm_efficaci(mm):
     return mm * 0.85
 
 
+
+_ESPOSIZIONE = {}
+
+def esposizione_punto(lat, lon):
+    """Versante da 4 quote intorno al punto. Nord tiene umidità, sud la perde.
+    Come negli articoli FM: esposizione e bosco cambiano quanta acqua serve."""
+    key = f"{round(float(lat),3)},{round(float(lon),3)}"
+    if key in _ESPOSIZIONE:
+        return _ESPOSIZIONE[key]
+    try:
+        d = 0.004
+        lats = f"{lat},{float(lat)+d},{float(lat)-d},{lat},{lat}"
+        lons = f"{lon},{lon},{lon},{float(lon)+d},{float(lon)-d}"
+        r = requests.get(
+            "https://api.open-meteo.com/v1/elevation",
+            params={"latitude": lats, "longitude": lons},
+            timeout=12,
+        )
+        q = (r.json() or {}).get("elevation") or []
+        if len(q) < 5:
+            _ESPOSIZIONE[key] = "pianura"
+            return "pianura"
+        centro, nord, sud, est, ovest = [float(x or 0) for x in q[:5]]
+        # il versante guarda verso la discesa
+        if nord < sud - 25 and nord <= est and nord <= ovest:
+            esp = "nord"
+        elif sud < nord - 25 and sud <= est and sud <= ovest:
+            esp = "sud"
+        elif est < ovest - 20:
+            esp = "est"
+        elif ovest < est - 20:
+            esp = "ovest"
+        else:
+            esp = "pianura"
+    except Exception:
+        esp = "pianura"
+    _ESPOSIZIONE[key] = esp
+    return esp
+
+
 def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
     """Giorni tra la *spugnata* e le *prime nascite* (inizio buttata).
 
@@ -4428,7 +4469,7 @@ def giorni_attesa_bosco(tipo_bosco, t_max_media=20.0):
     return g
 
 
-def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco="faggio", quota=1000, soil=None):
+def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco="faggio", quota=1000, soil=None, esposizione="pianura", vento=None):
     """Trova le buttate a partire dalle spugnate.
 
     Flusso:
@@ -4507,18 +4548,70 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
             if (pd.Timestamp(data_start) - prev_pioggia).days <= 22:
                 terreno_umido = True
         ottimale = (16 <= float(t_max_media or 20) <= 24) and float(fattore_v or 1) >= 0.7
-        if terreno_umido:
-            soglia *= 0.52 if ottimale else 0.62
-        # Acqua distribuita su più giorni = migliore penetrazione → soglia più bassa
-        if n_gg >= 4:
-            soglia *= 0.78
-        elif n_gg >= 3:
-            soglia *= 0.85
-        elif n_gg >= 2:
+        # FunghiMagazine: non è solo la quantità. Dopo la pioggia contano
+        # vento (asciuga), temperature (miti sì, gelo o afa no) e terreno.
+        # Base ~40 mm. Si abbassa solo se DOPO la pioggia il bosco tiene
+        # l'umidità; si alza se il vento secca o fa troppo caldo/freddo.
+        if n_gg >= 3:
             soglia *= 0.92
-        # Accetta se: efficaci >= soglia, oppure totale grezzo del cluster >= soglia,
-        # oppure (totale mese già buono e cluster >= 38 mm grezzi)
-        if mm_eff < soglia and mm < soglia:
+        # bosco: faggio e abeti tengono, leccio perde
+        tb = (tipo_bosco or "").lower()
+        if tb in ("faggio", "abete_bianco", "abete_rosso"):
+            soglia *= 0.94
+        elif tb == "leccio":
+            soglia *= 1.10
+        # Base: a parità di vento il nord è più umido, il sole batte sul sud.
+        # Poi il vento: il versante sopravento si asciuga, il sottovento tiene.
+        # Vento forte da nord può ribaltare: il sud riparato resta più umido.
+        esp = (esposizione or "pianura").lower()
+        if esp == "nord":
+            soglia *= 0.94
+        elif esp == "sud":
+            soglia *= 1.08
+        vdir = ""
+        try:
+            vdir = str((vento or {}).get("direzione") or "").upper()
+        except Exception:
+            vdir = ""
+        if not vdir:
+            try:
+                vdir = str(get_vento_direzione_om(float(df["lat"].iloc[0]), float(df["lon"].iloc[0])) or "").upper() if "lat" in getattr(df, "columns", []) else ""
+            except Exception:
+                vdir = ""
+        sopravento = False
+        sottovento = False
+        if esp == "nord" and vdir in ("N", "NE", "NO"):
+            sopravento = True
+        elif esp == "sud" and vdir in ("S", "SE", "SO"):
+            sopravento = True
+        elif esp == "nord" and vdir in ("S", "SE", "SO"):
+            sottovento = True
+        elif esp == "sud" and vdir in ("N", "NE", "NO"):
+            sottovento = True
+        if sopravento:
+            soglia *= 1.12
+        elif sottovento:
+            soglia *= 0.90
+        try:
+            vinfo = riepilogo_vento(d, giorni=12, dopo_data=data_start) or {}
+            fv = float(vinfo.get("fattore_vento") or 1.0)
+        except Exception:
+            fv = 1.0
+        if fv >= 0.85 and 14 <= float(t_max_media or 20) <= 23:
+            soglia *= 0.85
+        elif fv < 0.6:
+            soglia *= 1.15
+        if float(t_max_media or 20) >= 27:
+            soglia *= 1.12
+        ts = None
+        try:
+            ts = float(soil.get("t_suolo")) if isinstance(soil, dict) and soil.get("t_suolo") else None
+        except Exception:
+            ts = None
+        if ts is not None and ts >= 19:
+            soglia *= 1.10
+        soglia = max(32.0, min(55.0, soglia))
+        if mm < soglia and mm_eff < soglia:
             continue
         # durata: media 14 gg. Tanta acqua ben distribuita: fino a 17-18, mai un mese
         durata = 14
@@ -4554,7 +4647,7 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
                 if s is not None and s < 0.18:
                     durata = round(durata * 0.75)
                 elif s is not None and 0.22 <= s <= 0.38:
-                    durata = min(18, durata + 1)
+                    durata = min(14, durata + 1)
             except Exception:
                 pass
             # terreno ancora caldo dall'estate: la buttata parte più tardi
@@ -4562,22 +4655,30 @@ def trova_buttate(df, giorni_attesa, t_max_media=20.0, fattore_v=1.0, tipo_bosco
                 ts = soil.get("t_suolo") if isinstance(soil, dict) else None
                 if ts is not None and ts >= 18:
                     attesa = attesa + (3 if ts >= 20 else 2)
-                    inizio = data_riferimento + pd.Timedelta(days=attesa)
-                    fine = inizio + pd.Timedelta(days=durata)
             except Exception:
                 pass
-        durata = int(max(8, min(18, durata)))
+        durata = int(max(8, min(14, durata)))
         attesa = int(giorni_attesa)
         if terreno_umido and ottimale:
             attesa = max(7, attesa - 3)
         elif terreno_umido:
             attesa = max(8, attesa - 1)
         # Attesa e buttata si contano dalla *prima* pioggia importante del cluster
-        # (inizio spugnata), non dall'ultimo giorno di pioggia.
         data_riferimento = pd.Timestamp(data_start if data_start is not None else data_evt)
+        # FM: pioggia continua dopo la spugnata sposta l'inizio
+        try:
+            fine_att = data_riferimento + pd.Timedelta(days=int(attesa))
+            coda = d[(d["date"] > data_riferimento) & (d["date"] <= fine_att)]
+            bagnati = int((pd.to_numeric(coda["precip"], errors="coerce").fillna(0) >= 3).sum()) if len(coda) else 0
+            if bagnati >= 5:
+                attesa = int(attesa) + 4
+            elif bagnati >= 3:
+                attesa = int(attesa) + 2
+        except Exception:
+            pass
         inizio = data_riferimento + pd.Timedelta(days=attesa)
         fine = inizio + pd.Timedelta(days=durata)
-        # Asciutto prolungato *dopo* le nascite può chiudere un po' prima;
+                # Asciutto prolungato *dopo* le nascite può chiudere un po' prima;
         # NON si usa la data della spugnata (prima tagliava a pioggia+12gg e
         # risultava "finita" dopo 4–5 giorni di nascite).
         dopo_nascite = d[d["date"] >= inizio.normalize()]
@@ -4806,7 +4907,7 @@ def _stima_suolo_da_aria(df):
     return round(val, 1)
 
 
-def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None):
+def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=None, vento=None, esposizione="pianura"):
     df = _ultimi_30g(df)
     if df is None or len(df) < 5:
         return 0, "Dati insufficienti", {}
@@ -4902,7 +5003,7 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
     fattore_v = float(vento0.get("fattore_vento") or 1.0)
     buttate = trova_buttate(
         df, giorni_attesa, t_max_media, fattore_v,
-        tipo_bosco=tipo_bosco, quota=quota, soil=soil,
+        tipo_bosco=tipo_bosco, quota=quota, soil=soil, esposizione=esposizione, vento=vento,
     )
     # ricalcola vento/fattore solo dal giorno della spugnata più rilevante in poi
     dopo_pioggia = None
@@ -5022,6 +5123,8 @@ def calcola_punteggio(df, tipo_bosco, regole, quota=1000, soil=None, forecast=No
         "umidita_suolo": (soil.get("umidita") if isinstance(soil, dict) else soil) if soil is not None else "n/d",
         "t_suolo": (soil.get("t_suolo") if isinstance(soil, dict) else None) if soil is not None else "n/d",
         "consiglio": consiglio,
+        "esposizione": esposizione,
+        "vento_direzione": (vento or {}).get("direzione"),
         "vento_medio_10g": vento.get("vento_medio_10g"),
         "vento_max_10g": vento.get("vento_max_10g"),
         "giorni_vento_20": vento.get("giorni_oltre_20"),
@@ -5131,6 +5234,11 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
     df = _ultimi_30g(df)
     info_meteo = info_meteo or {}
     df, vento = _completa_vento(df, p["lat"], p["lon"], vento)
+    if isinstance(vento, dict) and not vento.get("direzione"):
+        try:
+            vento["direzione"] = get_vento_direzione_om(p["lat"], p["lon"])
+        except Exception:
+            pass
     # stazione con vento/temp ma pluviometro spento (es. WU IFERRIER5 = 0 mm per 30g)
     try:
         mm_now = 0.0
@@ -5276,7 +5384,7 @@ def analizza_punto(p, regole, mn_token, max_km_stazione=5, mn_codici="", stazion
     try:
         score, livello, det = calcola_punteggio(
             df, p["tipo"], regole, quota=p.get("quota", 1000),
-            soil=soil, forecast=forecast, vento=vento,
+            soil=soil, forecast=forecast, vento=vento, esposizione=esposizione_punto(p.get("lat"), p.get("lon")),
         )
     except Exception:
         tot = 0.0
