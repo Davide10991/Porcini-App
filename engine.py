@@ -4077,6 +4077,40 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 if float(top.get("score") or 0) < float(vicina.get("score") or 0) + 5:
                     non_mappa = [vicina] + [c for c in non_mappa if c is not vicina]
             candidati = non_mappa + [c for c in candidati if c not in non_mappa]
+        # FM è già testata: se c'è, si tiene. Confronto solo dove FM non c'è.
+        def _is_fm(c):
+            f = str((c.get("info") or {}).get("fonte") or "").lower()
+            return "funghimagazine" in f or f.startswith("fm")
+        def _tot(c):
+            try:
+                return float((c.get("info") or {}).get("pioggia_stazione_30g") or 0)
+            except Exception:
+                return 0.0
+        fm = [c for c in non_mappa if _is_fm(c)]
+        if fm:
+            fm.sort(key=lambda c: (_dist(c), -float(c.get("score") or 0)))
+            non_mappa = fm
+        else:
+            try:
+                vals = sorted(_tot(c) for c in non_mappa if _tot(c) > 0)
+                if len(vals) >= 3:
+                    med = vals[len(vals)//2]
+                    tenute = [c for c in non_mappa if _tot(c) <= 0 or med <= 0 or (med * 0.45 <= _tot(c) <= med * 1.8)]
+                    if tenute:
+                        non_mappa = tenute
+                try:
+                    mz = mn_pioggia_mappa(lat, lon, 15) or {}
+                    mm_map = float(mz.get("mese_mm") or 0)
+                except Exception:
+                    mm_map = 0
+                if mm_map >= 8 and len(non_mappa) >= 2:
+                    vicine_mappa = [c for c in non_mappa if abs(_tot(c) - mm_map) <= max(25, mm_map * 0.6)]
+                    if vicine_mappa:
+                        non_mappa = vicine_mappa
+                non_mappa.sort(key=lambda c: (_dist(c), -float(c.get("score") or 0)))
+            except Exception:
+                pass
+        candidati = non_mappa + [c for c in candidati if c not in non_mappa]
         best = candidati[0]
 
         df = best["df"]
