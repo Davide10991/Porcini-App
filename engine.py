@@ -884,20 +884,21 @@ MN_PREC_PALETTE = [
 ]
 
 # scale tipiche mappe daily MN (approssimate sulla legenda)
-MN_TMIN_PALETTE = [
-    ((40, 0, 80), -8), ((20, 40, 180), -2), ((40, 120, 230), 4),
-    ((80, 200, 220), 8), ((160, 230, 140), 12), ((230, 230, 80), 16),
-    ((250, 160, 40), 20), ((240, 60, 30), 24), ((160, 20, 20), 28),
-]
+# scale lette dalla legenda vera delle mappe daily MN (temp_max / temp_min / wind)
 MN_TMAX_PALETTE = [
-    ((40, 0, 80), 0), ((20, 40, 180), 8), ((40, 120, 230), 14),
-    ((80, 200, 220), 18), ((160, 230, 140), 22), ((230, 230, 80), 26),
-    ((250, 160, 40), 30), ((240, 60, 30), 34), ((160, 20, 20), 38),
+    ((43, 0, 41), -25), ((80, 0, 101), -15), ((0, 101, 255), -5),
+    ((0, 183, 255), 0), ((0, 252, 246), 5), ((5, 211, 117), 10),
+    ((9, 179, 15), 15), ((138, 219, 7), 18), ((214, 243, 3), 22),
+    ((255, 241, 0), 26), ((255, 203, 0), 30), ((255, 128, 0), 35),
+    ((255, 40, 0), 40), ((205, 0, 40), 45),
 ]
+MN_TMIN_PALETTE = MN_TMAX_PALETTE
 MN_WIND_PALETTE = [
-    ((230, 230, 230), 2), ((180, 220, 255), 8), ((80, 180, 120), 15),
-    ((200, 220, 60), 25), ((250, 160, 40), 40), ((230, 40, 30), 60),
-    ((120, 0, 80), 80),
+    ((25, 247, 255), 2), ((25, 225, 158), 4), ((32, 210, 106), 6),
+    ((32, 188, 55), 8), ((69, 195, 32), 10), ((121, 218, 32), 14),
+    ((174, 232, 32), 18), ((225, 247, 25), 22), ((255, 225, 25), 26),
+    ((255, 188, 25), 35), ((255, 129, 25), 45), ((255, 55, 25), 60),
+    ((247, 25, 25), 80), ((174, 25, 92), 100),
 ]
 
 
@@ -1337,18 +1338,31 @@ def _mn_pioggia_mappa_cached(lat_r, lon_r):
         g = oggi - timedelta(days=i)
         iso = g.isoformat()
         try:
-            mm = mn_prec_da_mappa(lat, lon, iso)
+            mm = _mn_sample(lat, lon, iso, "prec", _mn_rgb_to_mm)
         except Exception:
             mm = None
         if mm is None:
             falliti += 1
             mm = 0.0
+        tmax = tmin = vento = None
+        try:
+            tmax = _mn_sample(lat, lon, iso, "temp_max", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMAX_PALETTE))
+        except Exception:
+            tmax = None
+        try:
+            tmin = _mn_sample(lat, lon, iso, "temp_min", lambda rgb: _mn_rgb_to_scala(rgb, MN_TMIN_PALETTE))
+        except Exception:
+            tmin = None
+        try:
+            vento = _mn_sample(lat, lon, iso, "wind", lambda rgb: _mn_rgb_to_scala(rgb, MN_WIND_PALETTE, neutro=False))
+        except Exception:
+            vento = None
         rows.append({
             "date": pd.Timestamp(g),
             "precip": round(float(mm or 0), 1),
-            "t_min": None,
-            "t_max": None,
-            "vento_max": None,
+            "t_min": tmin,
+            "t_max": tmax,
+            "vento_max": vento,
         })
     if not rows:
         return None
@@ -4112,40 +4126,7 @@ def get_weather_data(lat, lon, days=30, mn_token="", quota=None, max_km_stazione
                 }
         except Exception:
             pass
-        # mappe MN assenti o a 0: Open-Meteo (ICON) come alternativa
-        mm_ora = 0.0
-        try:
-            if df is not None and "precip" in df.columns:
-                mm_ora = float(pd.to_numeric(df["precip"], errors="coerce").fillna(0).sum())
-        except Exception:
-            mm_ora = 0.0
-        if df is None or mm_ora < 1:
-            try:
-                om, _fc, _so, _vo = get_openmeteo_bundle(lat, lon, days)
-                if om is not None and len(om) >= 8:
-                    p = pd.to_numeric(om["precip"], errors="coerce").fillna(0)
-                    if float(p.sum()) >= 1:
-                        df = om.copy()
-                        giorni = []
-                        for _, row in df.iterrows():
-                            try:
-                                if float(row.get("precip") or 0) >= 0.4:
-                                    giorni.append(f"{str(row.get('date'))[:10]}: {float(row['precip']):.1f} mm")
-                            except Exception:
-                                pass
-                        info = {
-                            "fonte": "Open-Meteo (zone senza stazione)",
-                            "stazione": "modello ICON",
-                            "distanza_km": 0,
-                            "quota_stazione": None,
-                            "pioggia_stazione_30g": round(float(p.sum()), 1),
-                            "giorni_pluviometro": giorni[-20:],
-                            "stima_mappa": True,
-                        }
-                        if isinstance(_so, dict):
-                            soil = _so
-            except Exception:
-                pass
+        # niente Open-Meteo sulla pioggia: solo stazione o mappa MN
         if df is None:
             try:
                 dpc = dpc_serie_giorni(lat, lon, giorni=min(days, 20))
